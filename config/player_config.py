@@ -1,83 +1,49 @@
 """
-Player Configuration File
-Input your character's preferences and bot behavior settings here.
-For skill levels, see player_stats.py
+Player behavior preferences (safe defaults).
+Includes anti-detection tuning knobs for human-like behavior.
 """
-import player_stats
 
-# Import stats from player_stats.py
-# This keeps stats separate from preferences for easier management
-WOODCUTTING_LEVEL = player_stats.WOODCUTTING_LEVEL
-ATTACK_LEVEL = player_stats.ATTACK_LEVEL
-STRENGTH_LEVEL = player_stats.STRENGTH_LEVEL
-DEFENCE_LEVEL = player_stats.DEFENCE_LEVEL
-HITPOINTS_LEVEL = player_stats.HITPOINTS_LEVEL
-RANGED_LEVEL = player_stats.RANGED_LEVEL
-PRAYER_LEVEL = player_stats.PRAYER_LEVEL
-MAGIC_LEVEL = player_stats.MAGIC_LEVEL
-MINING_LEVEL = player_stats.MINING_LEVEL
-FISHING_LEVEL = player_stats.FISHING_LEVEL
-COOKING_LEVEL = player_stats.COOKING_LEVEL
-FIREMAKING_LEVEL = player_stats.FIREMAKING_LEVEL
-COMBAT_LEVEL = player_stats.COMBAT_LEVEL
+# Preferred tree type (None = auto-select based on level in player_stats)
+PREFERRED_TREE_TYPE = None
 
-# --- Available Actions Based on Stats ---
-# These functions use your stats from player_stats.py
+# Log handling
+LOG_DISPOSAL_METHOD = "bank"  # "bank" or "drop"
+
+# Break behavior
+ENABLE_BREAKS = True
+BREAK_CHANCE = 0.10         # 10% chance to take a break each loop
+BREAK_DURATION_MIN = 30     # seconds
+BREAK_DURATION_MAX = 120    # seconds
+
+# Anti-detection behavior (human-like imperfections)
+ANTI_DETECTION_ENABLED = True
+
+# Mouse movement / clicks
+CURSOR_JITTER_PX = 2               # small random offset on moves/clicks
+CURSOR_OVERSHOOT_CHANCE = 0.25     # chance to overshoot then settle on target
+CURSOR_MICRO_STUTTER_CHANCE = 0.20 # chance to add a tiny pre-click wiggle
+MOVE_DURATION_RANGE = (0.08, 0.35) # base move duration range (seconds)
+
+# Timing imperfections
+ACTION_JITTER_RANGE = (0.04, 0.18) # random added/subtracted to sleeps
+IDLE_CHANCE = 0.08                 # chance to pause briefly in loops
+IDLE_DURATION_RANGE = (0.3, 2.0)   # short idle duration range (seconds)
+THINKING_PAUSE_CHANCE = 0.04       # occasional longer hesitation
+THINKING_PAUSE_RANGE = (2.0, 4.0)
+
+# Screen capture pacing
+CAPTURE_DELAY_RANGE = (0.00, 0.12) # random sleep before screen grabs
+
+# Convenience wrappers to align with existing code paths
+try:
+    from config import player_stats
+except Exception:
+    player_stats = None
 
 def get_available_tree_types():
     """
-    Returns a list of tree types the player can cut based on their Woodcutting level.
+    Delegate to player_stats if available to avoid import errors in bots.
     """
-    return player_stats.get_available_tree_types()
-
-def get_recommended_tree_type():
-    """
-    Returns the best tree type the player can cut based on their level.
-    Prioritizes higher XP trees that the player can access.
-    """
-    return player_stats.get_best_available_tree()
-
-# --- Player Preferences ---
-
-# Preferred tree type (leave as None to auto-select based on level)
-# Options: "regular", "oak", "willow", "teak", "maple", "mahogany", "yew", "magic", or None
-PREFERRED_TREE_TYPE = None  # None = auto-select based on level
-
-# Bank location preference (for future pathfinding)
-# Options: "nearest", "varrock", "lumbridge", "falador", "seers", "catherby", etc.
-PREFERRED_BANK = "nearest"
-
-# --- Equipment ---
-# What items you have equipped/carried (for future features)
-
-HAS_AXE = True              # Do you have an axe? (Required for woodcutting)
-AXE_TYPE = "bronze"         # Type of axe: "bronze", "iron", "steel", "mithril", "adamant", "rune", "dragon"
-                            # Higher tier axes cut faster
-
-# --- Bot Behavior Settings ---
-
-# Should the bot take breaks? (Makes it more human-like)
-ENABLE_BREAKS = True
-
-# Break frequency (0.0 to 1.0) - 0.1 = 10% chance of taking a break each cycle
-BREAK_CHANCE = 0.1
-
-# Break duration range (in seconds)
-BREAK_DURATION_MIN = 30
-BREAK_DURATION_MAX = 120
-
-# Should the bot bank logs or drop them?
-# Options: "bank" or "drop"
-LOG_DISPOSAL_METHOD = "bank"  # "bank" = deposit in bank, "drop" = drop on ground
-
-# --- Future Features (Placeholders) ---
-
-# Combat stats (for future combat bot features)
-COMBAT_LEVEL = 3            # Auto-calculated from combat stats
-
-# Quest completion (for future quest bot features)
-QUESTS_COMPLETED = []       # List of completed quest names
-
-# Unlocked areas (for future pathfinding)
-UNLOCKED_AREAS = ["lumbridge", "varrock"]  # Areas the player can access
-
+    if player_stats and hasattr(player_stats, "get_available_tree_types"):
+        return player_stats.get_available_tree_types()
+    return []

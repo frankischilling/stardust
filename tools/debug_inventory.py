@@ -12,6 +12,11 @@ import mss
 import pyautogui
 from woodcutter import INVENTORY_AREA, LOG_ICON_PATH
 
+# Create debug output directory
+DEBUG_OUTPUT_DIR = "debug"
+if not os.path.exists(DEBUG_OUTPUT_DIR):
+    os.makedirs(DEBUG_OUTPUT_DIR)
+
 def capture_inventory_area():
     """Capture and save the inventory area so you can see what the bot sees"""
     print("=" * 60)
@@ -24,12 +29,41 @@ def capture_inventory_area():
         screen_img = np.array(sct.grab(INVENTORY_AREA))
         screen_bgr = cv2.cvtColor(screen_img, cv2.COLOR_BGRA2BGR)
     
+    # Draw grid lines to visualize inventory slots
+    # RuneScape inventory is typically 4 columns x 7 rows = 28 slots
+    debug_img = screen_bgr.copy()
+    h, w = screen_bgr.shape[:2]
+    
+    # Draw vertical lines (columns) - 4 columns means 3 dividers
+    for i in range(1, 4):
+        x = int(w * i / 4)
+        cv2.line(debug_img, (x, 0), (x, h), (255, 0, 0), 1)  # Blue lines for columns
+    
+    # Draw horizontal lines (rows) - 7 rows means 6 dividers
+    for i in range(1, 7):
+        y = int(h * i / 7)
+        cv2.line(debug_img, (0, y), (w, y), (0, 0, 255), 1)  # Red lines for rows
+    
+    # Label the slots
+    slot_width = w / 4
+    slot_height = h / 7
+    for col in range(4):
+        for row in range(7):
+            slot_num = row * 4 + col + 1
+            x = int(col * slot_width + slot_width / 2)
+            y = int(row * slot_height + slot_height / 2)
+            cv2.putText(debug_img, str(slot_num), (x - 10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+    
     # Save the captured area
-    debug_path = "inventory_debug.png"
-    cv2.imwrite(debug_path, screen_bgr)
+    debug_path = os.path.join(DEBUG_OUTPUT_DIR, "inventory_debug.png")
+    cv2.imwrite(debug_path, debug_img)
     print(f"✓ Saved inventory area to: {debug_path}")
     print(f"  Size: {screen_bgr.shape[1]}x{screen_bgr.shape[0]} pixels")
     print(f"  Channels: {screen_bgr.shape[2]}")
+    print(f"\n⚠ Check the image - it should show all 4 columns (slots 1-28)")
+    print(f"   If you only see 3 columns, the inventory area 'left' coordinate is too far right!")
+    print(f"   Use option 2 to recalibrate, making sure to click the VERY FIRST slot (top-left).")
     
     return screen_bgr
 
@@ -124,7 +158,7 @@ def visualize_matches(screen_bgr):
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
     
     # Save debug image
-    debug_path = "inventory_matches_debug.png"
+    debug_path = os.path.join(DEBUG_OUTPUT_DIR, "inventory_matches_debug.png")
     cv2.imwrite(debug_path, debug_img)
     print(f"✓ Saved debug image with matches: {debug_path}")
     print(f"  Found {matches_found} potential match(es) with threshold {threshold}")
@@ -182,9 +216,9 @@ def main():
         print("\n" + "=" * 60)
         print("Next Steps:")
         print("=" * 60)
-        print("1. Check 'inventory_debug.png' - does it show your inventory?")
-        print("2. Check 'inventory_matches_debug.png' - are there green boxes around logs?")
-        print("3. If inventory_debug.png is wrong, use option 2 to recalibrate")
+        print(f"1. Check '{os.path.join(DEBUG_OUTPUT_DIR, 'inventory_debug.png')}' - does it show your inventory?")
+        print(f"2. Check '{os.path.join(DEBUG_OUTPUT_DIR, 'inventory_matches_debug.png')}' - are there green boxes around logs?")
+        print(f"3. If inventory_debug.png is wrong, use option 2 to recalibrate")
         print("4. If no green boxes, try recapturing the template with capture_template.py")
     elif choice == "2":
         show_inventory_coords()

@@ -102,7 +102,6 @@ def capture_template():
         time.sleep(2)
         
         import sys
-        import os
         # Add scripts directory to path
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts"))
         import bot_utils
@@ -176,7 +175,7 @@ def capture_custom_size():
 
 def main():
     print("Choose an option:")
-    print("1. Capture template (30x30 pixels) - Recommended")
+    print("1. Capture template (64x64 pixels) - Recommended")
     print("2. Capture template (custom size)")
     print("3. Exit")
     

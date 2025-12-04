@@ -14,6 +14,11 @@ import pyautogui
 import time
 from woodcutter import GAME_AREA, TREE_COLOR_LOWER, TREE_COLOR_UPPER, UI_EXCLUSION_LEFT
 
+# Create debug output directory
+DEBUG_OUTPUT_DIR = "debug"
+if not os.path.exists(DEBUG_OUTPUT_DIR):
+    os.makedirs(DEBUG_OUTPUT_DIR)
+
 def capture_game_area():
     """Capture the game area"""
     print("=" * 60)
@@ -28,8 +33,9 @@ def capture_game_area():
         screen_bgr = cv2.cvtColor(screen_img, cv2.COLOR_BGRA2BGR)
     
     # Save raw capture
-    cv2.imwrite("game_area_debug.png", screen_bgr)
-    print(f"✓ Saved game area to: game_area_debug.png")
+    debug_path = os.path.join(DEBUG_OUTPUT_DIR, "game_area_debug.png")
+    cv2.imwrite(debug_path, screen_bgr)
+    print(f"✓ Saved game area to: {debug_path}")
     print(f"  Size: {screen_bgr.shape[1]}x{screen_bgr.shape[0]} pixels")
     
     return screen_bgr
@@ -47,8 +53,9 @@ def visualize_color_detection(screen_bgr):
     mask = cv2.inRange(screen_hsv, np.array(TREE_COLOR_LOWER), np.array(TREE_COLOR_UPPER))
     
     # Save the mask
-    cv2.imwrite("tree_color_mask.png", mask)
-    print("✓ Saved color mask to: tree_color_mask.png")
+    mask_path = os.path.join(DEBUG_OUTPUT_DIR, "tree_color_mask.png")
+    cv2.imwrite(mask_path, mask)
+    print(f"✓ Saved color mask to: {mask_path}")
     print("  White areas = detected as tree color")
     print("  Black areas = not matching tree color")
     
@@ -139,8 +146,9 @@ def visualize_color_detection(screen_bgr):
             print(f"  Tree {i+1}: Center at ({abs_x}, {abs_y}), Area: {int(area)}")
     
     # Save debug image
-    cv2.imwrite("tree_detection_debug.png", debug_img)
-    print(f"\n✓ Saved debug visualization to: tree_detection_debug.png")
+    debug_path = os.path.join(DEBUG_OUTPUT_DIR, "tree_detection_debug.png")
+    cv2.imwrite(debug_path, debug_img)
+    print(f"\n✓ Saved debug visualization to: {debug_path}")
     print("  Green boxes = detected tree areas")
     print("  Red dots = center points (where bot would click)")
     
@@ -222,9 +230,9 @@ def main():
         print("\n" + "=" * 60)
         print("Next Steps:")
         print("=" * 60)
-        print("1. Check 'game_area_debug.png' - does it show your game?")
-        print("2. Check 'tree_color_mask.png' - white areas are detected")
-        print("3. Check 'tree_detection_debug.png' - green boxes show detected trees")
+        print(f"1. Check '{os.path.join(DEBUG_OUTPUT_DIR, 'game_area_debug.png')}' - does it show your game?")
+        print(f"2. Check '{os.path.join(DEBUG_OUTPUT_DIR, 'tree_color_mask.png')}' - white areas are detected")
+        print(f"3. Check '{os.path.join(DEBUG_OUTPUT_DIR, 'tree_detection_debug.png')}' - green boxes show detected trees")
         print("4. If wrong things are detected, use option 2 to recalibrate colors")
     
     if choice == "2" or choice == "3":

@@ -39,7 +39,8 @@ This project demonstrates fundamental bot mechanics using screen-scraping and co
 stardust/
 ├── scripts/              # Main bot scripts
 │   ├── bot_utils.py     # Core utility functions
-│   └── woodcutter.py    # Main bot script
+│   ├── woodcutter.py    # Woodcutting bot
+│   └── firemaking.py    # Firemaking bot
 ├── tools/               # Calibration and testing tools
 │   ├── calibrate_game_area.py
 │   ├── calibrate_inventory.py
@@ -50,6 +51,7 @@ stardust/
 │   ├── test_threshold.py
 │   ├── debug_tree_detection.py
 │   ├── debug_inventory.py
+│   ├── debug_firemaking.py
 │   └── fix_template.py
 ├── docs/                # Documentation
 │   ├── README.md        # This file
@@ -80,7 +82,7 @@ Run the calibration tool to automatically configure your game window coordinates
 python tools/calibrate_game_area.py
 ```
 
-Follow the instructions to capture the top-left and bottom-right corners of your game window. The tool will output the `GAME_AREA` values - copy these into `scripts/woodcutter.py`.
+Follow the instructions to capture the top-left and bottom-right corners of your game window. The tool will output the `GAME_AREA` values - copy these into `scripts/woodcutter.py` (and `scripts/firemaking.py` if you want matching bounds).
 
 **Future improvement:** This will automatically update the configuration file in a future version.
 
@@ -95,6 +97,7 @@ python tools/calibrate_inventory.py
 Follow the instructions to capture your inventory area. The tool will output the `INVENTORY_AREA` values - copy these into `scripts/woodcutter.py`.
 
 **Future improvement:** This will automatically update the configuration file in a future version.
+**Firemaking:** Use the same inventory area in `scripts/firemaking.py` so template matching scans all 4 columns.
 
 ### 4. Find Tree Colors
 
@@ -116,6 +119,8 @@ python tools/capture_template.py
 
 Follow the instructions to capture a log icon. The tool will automatically save it to `templates/log_icon.png`.
 
+Firemaking also needs a tinderbox template. Capture it with the same tool and save as `tinderbox_icon.png` (or `log_tinderbox.png`) in the `templates` folder.
+
 **Note:** You don't need to manually create screenshots or edit images - the tool handles everything.
 
 ### 6. Configure the Bot (Minimal)
@@ -123,6 +128,7 @@ Follow the instructions to capture a log icon. The tool will automatically save 
 Edit `scripts/woodcutter.py` and update only:
 - `TREE_COLOR_LOWER` and `TREE_COLOR_UPPER`: HSV color range from step 4 (copy manually)
 - `TREE_TYPE`: Optional - change if cutting different tree types (default: "regular")
+ - Firemaking: update your Firemaking level for completeness (burn time is fixed; leveling mainly unlocks higher-tier logs and raises light success chance)
 
 **Note:** `GAME_AREA` and `INVENTORY_AREA` are already automatically configured by the calibration tools (steps 2-3). Most other settings are pre-configured and don't need changes.
 
@@ -135,6 +141,15 @@ python scripts/woodcutter.py
 ```
 
 Press `Ctrl+C` to stop the bot.
+
+For firemaking:
+
+```bash
+python scripts/firemaking.py
+```
+
+Keep logs and a tinderbox in your inventory. The bot stops when the inventory is empty (no banking/pathfinding yet).
+Anti-detection (jittered movement/clicks, idle pauses, capture delay randomization) is on by default; adjust in `config/player_config.py`.
 
 ## How It Works
 
@@ -154,6 +169,7 @@ This is different from **reflection-based bots** (like DreamBot/RuneMate) that h
    - `find_color()`: Color detection to find objects by color
    - `human_like_move()`: More natural mouse movements
    - `count_inventory_items()`: Count items in inventory
+   - Anti-detection helpers: jittered sleeps, idle/“thinking” pauses, human-like click/move, capture delay randomization
 
 2. **scripts/woodcutter.py**: Main bot logic with a simple state machine:
    - `IDLE`: Looking for trees

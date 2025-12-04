@@ -210,9 +210,14 @@ python test_detection.py
 - ✓ Log Detection: Should find logs in your inventory
 
 **If tree detection fails:**
-- Run `python debug_tree_detection.py` (option 1) to see what's being detected
+- **First step: Recalibrate tree colors!** This is the most common fix:
+  ```bash
+  python tools/calibrate_tree_colors.py
+  ```
+  Select the tree type you're trying to cut and follow the prompts. The tool automatically updates the color values.
+- Run `python tools/debug_tree_detection.py` (option 1) to see what's being detected
 - Check that trees are visible in the game window
-- Try recalibrating tree colors with `color_picker.py`
+- Verify your graphics settings haven't changed (lighting, shadows, etc.)
 
 **If log detection fails:**
 - Make sure you have logs in your inventory
@@ -275,11 +280,11 @@ Press `Ctrl+C` in the terminal to stop the bot safely.
 
 ### Problem: Bot doesn't find trees
 
-**Solution:**
-- Make sure trees are visible in the game window
-- Check `GAME_AREA` coordinates are correct
-- Recalibrate tree colors - trees might look different in different lighting
-- Run `debug_tree_detection.py` to see what colors are being detected
+**Solution (try in this order):**
+1. **Recalibrate tree colors** - This fixes most detection issues! Run `python tools/calibrate_tree_colors.py` and select the tree type you're cutting. Trees might look different in different lighting, or your graphics settings might have changed. If switching between different tree types, recalibrate for each type.
+2. Make sure trees are visible in the game window
+3. Check `GAME_AREA` coordinates are correct (recalibrate if needed)
+4. Run `python tools/debug_tree_detection.py` to see what colors are being detected
 
 ### Problem: Bot doesn't find logs
 

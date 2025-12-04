@@ -43,8 +43,8 @@ DEBUG_MODE = True  # Set to True to enable debug visualization
 # Tree 1: H=0, S=0, V=12 (dark trunk)
 # Tree 2: H=10, S=67, V=23 (brown trunk)
 # Narrowed range to reduce UI element detection
-TREE_COLOR_LOWER = (1, 65, 45)      # Lower HSV bound - dark brown/black trees
-TREE_COLOR_UPPER = (21, 125, 105)    # Upper HSV bound - brown trees (narrowed to reduce UI matches)
+TREE_COLOR_LOWER = (7, 90, 87)      # Lower HSV bound - dark brown/black trees
+TREE_COLOR_UPPER = (28, 151, 152)    # Upper HSV bound - brown trees (narrowed to reduce UI matches)
 
 # Optional: Define different color ranges for different tree types
 # Uncomment and configure these if you want to cut specific tree types:
@@ -100,10 +100,10 @@ else:
 # Inventory area (typically bottom right of game window)
 # Calibrated using calibrate_inventory.py
 INVENTORY_AREA = {
-    "top": 442,
-    "left": 1509,
-    "width": 354,
-    "height": 494
+    "top": 430,
+    "left": 1354,
+    "width": 445,
+    "height": 505
 }
 
 # --- State Management ---
@@ -133,6 +133,10 @@ def check_inventory_full():
         print(f"  Warning: Count ({count}) seems too high, may have false positives")
     return count >= 27
 
+# Track recently clicked tree positions to avoid clicking the same tree repeatedly
+_last_clicked_trees = []  # List of (x, y) positions, max 5 entries
+_MIN_TREE_DISTANCE = 50   # Minimum distance in pixels to consider a different tree
+
 def find_and_click_tree():
     """
     Finds a tree using color detection and clicks on it.
@@ -142,11 +146,13 @@ def find_and_click_tree():
     Excludes UI areas to avoid detecting inventory/minimap elements.
     
     Automatically uses the correct color range based on TREE_TYPE if configured.
+    Tracks recently clicked trees to avoid clicking the same tree repeatedly.
     
     WARNING: Color detection cannot distinguish between tree types!
     Make sure your color range is calibrated for the specific tree type you want to cut.
     If you're level 1 but the bot clicks oak trees, your color range is too broad.
     """
+    global _last_clicked_trees
     # CRITICAL: Verify player can actually cut this tree type
     if USE_PLAYER_CONFIG and player_stats:
         if not player_stats.can_cut_tree_type(TREE_TYPE):
@@ -202,10 +208,12 @@ def find_and_click_tree():
     # Size filtering is the KEY to distinguishing tree types when colors are similar!
     if TREE_TYPE == "regular":
         # Regular trees are smaller - filter out larger oak trees
-        min_area = 600      # Minimum size for regular trees (increased to filter small furniture)
-        max_area = 8000     # Maximum size - filters out larger oak trees!
-        min_height = 35     # Trees should have some height (increased to filter short furniture)
-        print("  Using size filters for REGULAR trees (filters out larger oak trees and furniture)")
+        # Lower thresholds to detect trees that are far away (zoomed out)
+        # Still filters tiny clutter but allows distant trees
+        min_area = 200      # Minimum size - lowered to detect far-away trees (was 600)
+        max_area = 15000    # Allow trunk + canopy to be one contour
+        min_height = 15     # Trees should have some height - lowered for zoomed-out trees (was 35)
+        print("  Using size filters for REGULAR trees (supports zoomed-out/distant trees)")
     elif TREE_TYPE == "oak":
         # Oak trees are larger - filter out smaller regular trees
         min_area = 3000     # Minimum size - filters out smaller regular trees!
@@ -226,25 +234,26 @@ def find_and_click_tree():
     # max_width: 300 - filters very wide UI panels (trees aren't that wide)
     # max_height: 400 - filters very tall UI panels (trees aren't that tall)
     # exclude_ui_left: Exclude right side where UI is (inventory, minimap, etc.)
+    detection_kwargs = {
+        "color_lower": color_lower,
+        "color_upper": color_upper,
+        "game_area": GAME_AREA,
+        "min_area": min_area,
+        "max_area": max_area,
+        "min_aspect_ratio": 0.35,
+        "max_aspect_ratio": 3.0,
+        "min_height": min_height,
+        "max_width": 300,
+        "max_height": 400,
+        "exclude_ui_left": UI_EXCLUSION_LEFT,
+        "exclude_ui_bottom": UI_EXCLUSION_BOTTOM,
+        "exclude_ui_right_edge": UI_EXCLUSION_RIGHT_EDGE,
+    }
     
     # Debug visualization if enabled
     if DEBUG_MODE:
         print("  🔍 DEBUG MODE: Creating visualization...")
-        debug_img, mask_img, detection_info = bot_utils.visualize_color_detection(
-            color_lower,
-            color_upper,
-            GAME_AREA,
-            min_area=min_area,
-            max_area=max_area,
-            min_aspect_ratio=0.4,
-            max_aspect_ratio=2.5,
-            min_height=min_height,
-            max_width=300,
-            max_height=400,
-            exclude_ui_left=UI_EXCLUSION_LEFT,
-            exclude_ui_bottom=UI_EXCLUSION_BOTTOM,
-            exclude_ui_right_edge=UI_EXCLUSION_RIGHT_EDGE
-        )
+        debug_img, mask_img, detection_info = bot_utils.visualize_color_detection(**detection_kwargs)
         print(f"  📊 Detection stats:")
         print(f"     - Total contours found: {detection_info['total_contours']}")
         print(f"     - Valid contours: {detection_info['valid_contours']}")
@@ -255,29 +264,60 @@ def find_and_click_tree():
         else:
             print(f"     - No valid trees detected!")
     
-    tree_pos = bot_utils.find_color(
-        color_lower, 
-        color_upper, 
-        GAME_AREA,
-        min_area=min_area,      # Varies by tree type - KEY for filtering wrong tree types!
-        max_area=max_area,      # Varies by tree type - filters wrong tree types!
-        min_aspect_ratio=0.4,  # Trees can be somewhat tall
-        max_aspect_ratio=2.5,  # Trees can be somewhat wide
-        min_height=min_height,  # Varies by tree type - helps filter wrong tree types
-        max_width=300,     # Maximum width (filters large UI panels)
-        max_height=400,    # Maximum height (filters large UI panels)
-        exclude_ui_left=UI_EXCLUSION_LEFT,  # Exclude UI area (right side)
-        exclude_ui_bottom=UI_EXCLUSION_BOTTOM,  # Exclude bottom area (inventory)
-        exclude_ui_right_edge=UI_EXCLUSION_RIGHT_EDGE  # Exclude if extends into right side
-    )
+    # Find all valid trees
+    all_trees = bot_utils.find_all_colors(**detection_kwargs)
     
-    if tree_pos:
-        print(f"Tree found at {tree_pos}. Clicking...")
-        bot_utils.human_like_click(tree_pos[0], tree_pos[1])
-        return True
-    else:
+    # Fallback: relax filters to catch small/distant trees
+    if not all_trees:
+        print("No tree found with primary filters. Trying relaxed distant-tree filters...")
+        fallback_kwargs = detection_kwargs.copy()
+        fallback_kwargs.update({
+            "min_area": max(60, int(min_area * 0.3)),  # much smaller trunks/canopies
+            "min_height": max(8, int(min_height * 0.5)),
+            "min_aspect_ratio": 0.25,  # allow thinner silhouettes at distance
+            "max_aspect_ratio": 3.6,
+            "max_width": 340,
+            "max_height": 420,
+        })
+        all_trees = bot_utils.find_all_colors(**fallback_kwargs)
+        
+        if DEBUG_MODE:
+            _, _, fb_info = bot_utils.visualize_color_detection(save_images=False, **fallback_kwargs)
+            print(f"  📊 Fallback detection: total contours={fb_info['total_contours']}, valid={fb_info['valid_contours']}")
+    
+    if not all_trees:
         print("No tree found.")
         return False
+    
+    # Filter out trees that are too close to recently clicked ones
+    available_trees = []
+    for tree_pos in all_trees:
+        too_close = False
+        for last_pos in _last_clicked_trees:
+            distance = np.sqrt((tree_pos[0] - last_pos[0])**2 + (tree_pos[1] - last_pos[1])**2)
+            if distance < _MIN_TREE_DISTANCE:
+                too_close = True
+                break
+        if not too_close:
+            available_trees.append(tree_pos)
+    
+    # If no trees are far enough from recent clicks, use any tree (fallback)
+    if not available_trees:
+        available_trees = all_trees
+        print(f"  All {len(all_trees)} trees are near recently clicked ones, using closest available")
+    
+    # Pick the first available tree (largest, or furthest from recent clicks)
+    tree_pos = available_trees[0]
+    
+    # Add to recently clicked list (keep only last 5)
+    _last_clicked_trees.append(tree_pos)
+    if len(_last_clicked_trees) > 5:
+        _last_clicked_trees.pop(0)
+    
+    print(f"Tree found at {tree_pos} ({len(all_trees)} total, {len(available_trees)} available). Clicking...")
+    bot_utils.maybe_idle("pre_tree_click")
+    bot_utils.human_like_click(tree_pos[0], tree_pos[1])
+    return True
 
 def wait_for_cutting_completion():
     """
@@ -297,7 +337,7 @@ def wait_for_cutting_completion():
                 logs_per = tree_info.get("logs_per_tree", "multiple")
                 wait_time = random.uniform(wait_range[0], wait_range[1])
                 print(f"Cutting {TREE_TYPE} tree... (waiting {wait_time:.1f} seconds, {xp} XP per log, {logs_per} logs per tree)")
-                time.sleep(wait_time)
+                bot_utils.jitter_sleep(wait_time)
                 return
         except Exception as e:
             print(f"⚠ Warning: Could not get tree info from player_stats: {e}")
@@ -320,7 +360,7 @@ def wait_for_cutting_completion():
     wait_time = random.uniform(wait_range[0], wait_range[1])
     
     print(f"Cutting {TREE_TYPE} tree... (waiting {wait_time:.1f} seconds per log)")
-    time.sleep(wait_time)
+    bot_utils.jitter_sleep(wait_time)
 
 def drop_logs():
     """
@@ -347,9 +387,9 @@ def drop_logs():
         # Shift-click to drop (or right-click and select drop)
         # For now, just right-click and we'd need a drop template
         bot_utils.human_like_move(log_pos[0], log_pos[1])
-        time.sleep(random.uniform(0.1, 0.2))
+        bot_utils.jitter_sleep(random.uniform(0.1, 0.2))
         pyautogui.rightClick()
-        time.sleep(random.uniform(0.2, 0.4))
+        bot_utils.jitter_sleep(random.uniform(0.2, 0.4))
         # In a real implementation, find and click "Drop" option
         print("(Placeholder: Would click Drop here)")
         return True
@@ -378,18 +418,18 @@ def bank_logs():
         print("Found logs in inventory. Right-clicking...")
         # Right-click on logs
         bot_utils.human_like_move(log_pos[0], log_pos[1])
-        time.sleep(random.uniform(0.1, 0.3))
+        bot_utils.jitter_sleep(random.uniform(0.1, 0.3))
         pyautogui.rightClick()
-        time.sleep(random.uniform(0.3, 0.5))
+        bot_utils.jitter_sleep(random.uniform(0.3, 0.5))
         
         # In a real implementation, you'd need to find and click "Deposit-All"
         # For now, this is a placeholder
         print("(Placeholder: Would click Deposit-All here)")
         
         # Close bank with Escape
-        time.sleep(random.uniform(0.5, 1.0))
+        bot_utils.jitter_sleep(random.uniform(0.5, 1.0))
         pyautogui.press('escape')
-        time.sleep(random.uniform(0.5, 1.0))
+        bot_utils.jitter_sleep(random.uniform(0.5, 1.0))
         return True
     else:
         print("Could not find logs in inventory.")
@@ -415,7 +455,7 @@ def take_break():
     if random.random() < break_chance:
         break_duration = random.uniform(break_min, break_max)
         print(f"Taking a break for {break_duration:.1f} seconds...")
-        time.sleep(break_duration)
+        bot_utils.jitter_sleep(break_duration)
 
 def main():
     """
@@ -441,8 +481,9 @@ def main():
     # Display player configuration if available
     if USE_PLAYER_CONFIG:
         print(f"\nPlayer Configuration:")
-        print(f"  Woodcutting Level: {player_config.WOODCUTTING_LEVEL}")
-        print(f"  Available Trees: {', '.join(player_config.get_available_tree_types())}")
+        if player_stats:
+            print(f"  Woodcutting Level: {player_stats.WOODCUTTING_LEVEL}")
+            print(f"  Available Trees: {', '.join(player_config.get_available_tree_types())}")
         print(f"  Selected Tree Type: {TREE_TYPE}")
         
         # CRITICAL: Verify player can cut this tree type
@@ -490,8 +531,9 @@ def main():
     
     print("\nStarting in 5 seconds... Switch to RuneScape window now.")
     print("Press Ctrl+C in this terminal to stop the bot.\n")
+    print(bot_utils.describe_anti_detection())
     
-    time.sleep(5)
+    bot_utils.jitter_sleep(5)
     
     state = BotState.IDLE
     cycles_completed = 0
@@ -509,11 +551,12 @@ def main():
                     wait_for_cutting_completion()
                 else:
                     print("Could not find tree. Waiting...")
-                    time.sleep(random.uniform(2, 4))
+                    bot_utils.maybe_idle("idle_no_tree")
+                    bot_utils.jitter_sleep(random.uniform(2, 4))
             
             elif state == BotState.CUTTING:
                 # Wait a bit before checking inventory (don't check too frequently)
-                time.sleep(random.uniform(2, 4))
+                bot_utils.jitter_sleep(random.uniform(2, 4))
                 
                 # Check if we should continue cutting or go bank
                 if check_inventory_full():
@@ -524,7 +567,7 @@ def main():
                     # This simulates the time it takes to cut multiple logs from one tree
                     wait_between_trees = random.uniform(3, 6)  # Wait 3-6 seconds between trees
                     print(f"Continuing to cut... (waiting {wait_between_trees:.1f} seconds)")
-                    time.sleep(wait_between_trees)
+                    bot_utils.jitter_sleep(wait_between_trees)
                     
                     # Find and click next tree
                     if find_and_click_tree():
@@ -533,14 +576,14 @@ def main():
                     else:
                         print("Lost tree. Searching again...")
                         state = BotState.IDLE
-                        time.sleep(random.uniform(1, 2))
+                        bot_utils.jitter_sleep(random.uniform(1, 2))
             
             elif state == BotState.WALKING_TO_BANK:
                 # In a real bot, this would use pathfinding
                 # For now, we assume you're already near a bank
                 print("(Placeholder: Would use pathfinding to reach bank)")
                 state = BotState.BANKING
-                time.sleep(random.uniform(1, 2))
+                bot_utils.jitter_sleep(random.uniform(1, 2))
             
             elif state == BotState.BANKING:
                 if bank_logs():
@@ -550,16 +593,17 @@ def main():
                     state = BotState.WALKING_TO_TREES
                 else:
                     print("Banking failed. Retrying...")
-                    time.sleep(random.uniform(1, 2))
+                    bot_utils.jitter_sleep(random.uniform(1, 2))
             
             elif state == BotState.WALKING_TO_TREES:
                 # In a real bot, this would use pathfinding
                 print("(Placeholder: Would use pathfinding to reach trees)")
                 state = BotState.IDLE
-                time.sleep(random.uniform(1, 2))
+                bot_utils.jitter_sleep(random.uniform(1, 2))
             
             # Small random delay between state transitions
-            time.sleep(random.uniform(0.5, 1.5))
+            bot_utils.maybe_idle("loop_idle")
+            bot_utils.jitter_sleep(random.uniform(0.5, 1.5))
             
     except KeyboardInterrupt:
         print("\n\nBot stopped by user.")

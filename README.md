@@ -27,22 +27,37 @@ Jagex has sophisticated anti-cheat systems (BotWatch) that are designed to detec
 
 This project is **FOR EDUCATIONAL PURPOSES ONLY**. It was created to understand bot mechanics for anti-cheat development. Using bots on RuneScape violates the game's Terms of Service and will result in a **permanent ban** of your account.
 
-**⚠️ THIS IS A VERY WORK-IN-PROGRESS (WIP) PROJECT ⚠️**
+**THIS IS A VERY WORK-IN-PROGRESS (WIP) PROJECT**
 
-**Stardust** is a general-purpose RuneScape bot framework designed for all skills and activities. Currently, woodcutting is the first implemented feature, demonstrating fundamental bot mechanics using screen-scraping and color detection. The bot features basic wood cutting functionality and will take breaks randomly to appear more human-like.
+**Stardust** is a general-purpose RuneScape bot framework designed for all skills and activities. Currently, woodcutting and firemaking are the first implemented features, demonstrating fundamental bot mechanics using screen-scraping, color detection, and template matching.
 
 **Current Features:**
-- Basic color-based tree detection
+
+**Woodcutting Module (`scripts/woodcutter.py`):**
+- Basic color-based tree detection (**Still a work in progress** - may not work, miss trees, or highlight wrong objects)
+- Detection may need color recalibration for your specific setup, lighting, or graphics settings
+- Supports detecting trees at different distances (zoomed in/out)
+- Tracks recently clicked trees to avoid clicking the same tree repeatedly
 - Random breaks to simulate human behavior
 - Simple state machine for woodcutting cycles
 - Inventory detection (checking if inventory is full)
 - Debug visualization mode
 
+**Firemaking Module (`scripts/firemaking.py`):**
+- Template matching to find logs and tinderbox in inventory
+- Uses tinderbox-on-log clicks to light fires
+- Stops when inventory is empty (pathfinding/banking not implemented yet)
+- Debug helper `tools/debug_firemaking.py` to visualize what the bot sees
+- Anti-detection: jittered clicks/movement, idle pauses, and capture timing randomness (configurable)
+
 **Known Limitations:**
 - No pathfinding (assumes you're already near trees/bank)
-- Basic tree detection (may detect furniture, UI elements, etc.)
+- **Tree detection is still a work in progress** - may not work at all, miss trees, highlight wrong objects (furniture, UI elements, etc.), or require color recalibration for your specific setup, lighting, or graphics settings
+- Filters are continuously being improved but false positives and false negatives are still common
 - Simple timing-based wait system (doesn't detect actual game state)
 - No error recovery or advanced state detection
+- Firemaking module stops when inventory is empty (no banking yet)
+- Fire burn time in OSRS is constant; leveling Firemaking only unlocks higher-tier logs and increases light success rate, not burn speed
 
 This serves as a learning tool to understand:
 
@@ -58,7 +73,8 @@ This serves as a learning tool to understand:
 stardust/
 ├── scripts/              # Main bot scripts
 │   ├── bot_utils.py     # Core utility functions
-│   └── woodcutter.py    # Main bot script
+│   ├── woodcutter.py    # Woodcutting bot module
+│   └── firemaking.py    # Firemaking bot module
 ├── tools/               # Calibration and testing tools
 │   ├── calibrate_game_area.py
 │   ├── calibrate_inventory.py
@@ -69,7 +85,8 @@ stardust/
 │   ├── test_detection.py
 │   ├── test_threshold.py
 │   ├── debug_tree_detection.py
-│   ├── debug_inventory.py
+│   ├── debug_inventory.py       # Inventory template matching (generic)
+│   ├── debug_firemaking.py      # Firemaking-specific inventory debugging
 │   └── fix_template.py
 ├── config/              # Player configuration
 │   ├── player_stats.py  # Your character's skill levels
@@ -88,7 +105,7 @@ stardust/
 
 ## Quick Start
 
-**⚠️ READ THE WARNINGS ABOVE FIRST ⚠️**
+**READ THE WARNINGS ABOVE FIRST**
 
 **Note:** Most scripts don't require manual editing. Just use the built-in calibration tools to set up your inventory and screen coordinates. The tools **automatically update** the configuration files for you!
 
@@ -102,6 +119,7 @@ stardust/
 
 3. **Configure your character:**
    - Edit `config/player_stats.py` - Update your **Woodcutting Level** (most important!)
+   - If using firemaking, also update your **Firemaking Level** (burn time is fixed; level mainly unlocks higher-tier logs and improves light chance)
    - Edit `config/player_config.py` - Set preferences (optional, has sensible defaults)
    - The bot automatically selects the best tree type based on your level
 
@@ -124,7 +142,7 @@ stardust/
    - The tool **automatically updates** `scripts/woodcutter.py` with the `INVENTORY_AREA` coordinates
    
    **Step 4c: Calibrate Tree Colors**
-   - ⚠️ **Important:** The default color calibration is set up for **basic OSRS** (standard textures, default lighting, no shading mods)
+   - **Important:** The default color calibration is set up for **basic OSRS** (standard textures, default lighting, no shading mods)
    - If you're using **custom textures, lighting mods, or shading**, you **MUST** recalibrate the tree colors
    - Run `python tools/calibrate_tree_colors.py` (recommended) or `python tools/color_picker.py`
    - Follow the prompts to capture tree colors
@@ -135,6 +153,11 @@ stardust/
    - Run `python tools/capture_template.py`
    - Follow the prompts to capture a log icon template
 
+   **Step 4e: Create Tinderbox Template (Firemaking)**
+   - Ensure a tinderbox is in your inventory
+   - Run `python tools/capture_template.py` and save as `tinderbox_icon.png` (or `log_tinderbox.png`)
+   - Keep the template in the `templates` folder so `firemaking.py` can load it
+
    **Note:** The calibration tools automatically update the configuration files - no manual editing needed for game area, inventory area, or tree colors!
 
 5. **Test detection:**
@@ -144,9 +167,47 @@ stardust/
    This verifies that tree detection and inventory detection are working correctly.
 
 6. **Run the bot (AT YOUR OWN RISK):**
+   
+   **For Woodcutting:**
    ```bash
    python scripts/woodcutter.py
    ```
+   
+   **For Firemaking:**
+   ```bash
+   python scripts/firemaking.py
+   ```
+   
+   **Note:** The firemaking bot will stop when your inventory is empty since pathfinding to bank is not implemented yet.
+   Make sure logs and a tinderbox are in your inventory before you start.
+   Anti-detection settings (jittered input, idle pauses, capture delays) are enabled by default; tune them in `config/player_config.py`.
+
+## Troubleshooting
+
+### Woodcutting Module Not Working?
+
+**If the woodcutting module isn't detecting trees correctly, the most common fix is to recalibrate the tree colors:**
+
+1. **Run the tree color calibration tool:**
+   ```bash
+   python tools/calibrate_tree_colors.py
+   ```
+
+2. **Select the tree type you're trying to cut** (e.g., "1" for Regular Trees)
+
+3. **Follow the prompts** to capture 3-5 color samples from different parts of the tree trunk
+
+4. **Save the calibration** - The tool automatically updates `scripts/woodcutter.py` with the new color values
+
+5. **Test again** with `python tools/debug_tree_detection.py` to verify trees are now detected
+
+**Why this helps:** Tree colors can vary based on:
+- Your graphics settings (lighting, shadows, textures)
+- Time of day in-game
+- Different tree types
+- Custom client modifications
+
+If the bot isn't finding trees, it's usually because the color range doesn't match your specific setup. Recalibrating ensures the color detection matches your game's appearance.
 
 ## TODO / Planned Features
 
