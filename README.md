@@ -1,0 +1,2 @@
+# stardust
+Stardust - Educational RuneScape bot framework for all skills. Currently implements woodcutting with screen-scraping and color detection. WIP project with basic tree detection, random breaks, and inventory management. For educational/anti-cheat research only.
