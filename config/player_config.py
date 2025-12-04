@@ -11,7 +11,7 @@ LOG_DISPOSAL_METHOD = "bank"  # "bank" or "drop"
 
 # Break behavior
 ENABLE_BREAKS = True
-BREAK_CHANCE = 0.10         # 10% chance to take a break each loop
+BREAK_CHANCE = 0.02         # 2% chance to take a break each loop (reduced from 10%)
 BREAK_DURATION_MIN = 30     # seconds
 BREAK_DURATION_MAX = 120    # seconds
 

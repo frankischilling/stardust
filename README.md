@@ -34,30 +34,61 @@ This project is **FOR EDUCATIONAL PURPOSES ONLY**. It was created to understand 
 **Current Features:**
 
 **Woodcutting Module (`scripts/woodcutter.py`):**
-- Basic color-based tree detection (**Still a work in progress** - may not work, miss trees, or highlight wrong objects)
-- Detection may need color recalibration for your specific setup, lighting, or graphics settings
-- Supports detecting trees at different distances (zoomed in/out)
-- Tracks recently clicked trees to avoid clicking the same tree repeatedly
-- Random breaks to simulate human behavior
-- Simple state machine for woodcutting cycles
-- Inventory detection (checking if inventory is full)
-- Debug visualization mode
+- **Advanced color-based tree detection** with multiple geometric filters:
+  - Aspect ratio filtering (trees are taller than wide)
+  - Size-based filtering (area, height, width constraints)
+  - Shape analysis (solidity, extent, circularity, vertex count)
+  - Vertical tree band filter (excludes indoor furniture and top-screen clutter)
+  - Edge complexity filter (distinguishes trees from smooth objects)
+  - Square object rejection (trees are never perfectly square)
+  - Window/furniture filter (rejects wide, rectangular objects)
+  - Small object filter (rejects tiny items like boxes/crates)
+  - Physics-based filters (ground position exclusion, horizontal object rejection)
+  - Proximity clustering (prefers trees near other trees)
+- **Top-left action text confirmation** using OCR and template matching to verify "Chop down Tree" before clicking
+- **Failed tree tracking** - automatically skips trees that don't yield logs after attempts
+- **Camera rotation** - automatically rotates camera (arrow keys) when no trees are found
+- **Inventory-based cutting logic** - waits for new log to appear in inventory before moving to next tree
+- **Advanced inventory full detection** - scans each of 28 slots individually, accounts for non-log items (axe, etc.)
+- **Context-aware mouse behavior** - different movement profiles for skilling vs inventory interactions
+- **Session-level behavioral variance** - varies focus level and wander chance per session
+- **Harmless repositioning** - occasionally moves character slightly to break repetitive patterns
+- **Random breaks** to simulate human behavior (configurable frequency)
+- **Debug visualization mode** for testing detection
+
+**⚠️ IMPORTANT NOTE ON TREE DETECTION:**
+While significant improvements have been made to tree detection with multiple filters and confirmation systems, **tree detection is still not perfect**. The bot may occasionally:
+- Miss some trees
+- Click on non-tree objects (though this is much rarer now)
+- Get stuck trying to cut the same tree repeatedly
+- Require manual intervention at times
+
+**However, the detection is good enough to set up and run with minimal management** - you can step away to get food or watch a video, and the bot will generally work decently. Just be aware that occasional monitoring and intervention may be needed.
 
 **Firemaking Module (`scripts/firemaking.py`):**
 - Template matching to find logs and tinderbox in inventory
 - Uses tinderbox-on-log clicks to light fires
+- **Stuck detection and movement** - automatically moves character if unable to place a fire
+- **Double-lighting prevention** - prevents attempting to light multiple fires simultaneously
+- **Consistent log counting** - uses unified method across all functions
+- **Improved fire detection** - multiple verification checks to confirm fire was lit
 - Stops when inventory is empty (pathfinding/banking not implemented yet)
 - Debug helper `tools/debug_firemaking.py` to visualize what the bot sees
-- Anti-detection: jittered clicks/movement, idle pauses, and capture timing randomness (configurable)
+- **Anti-detection features**:
+  - Context-aware mouse behavior (profiled movement)
+  - Jittered clicks/movement
+  - Idle pauses and "thinking" pauses
+  - Capture timing randomness
+  - Misclick simulation (rare deliberate misclicks followed by correction)
+  - Harmless repositioning after fires
+  - All configurable in `config/player_config.py`
 
 **Known Limitations:**
 - No pathfinding (assumes you're already near trees/bank)
-- **Tree detection is still a work in progress** - may not work at all, miss trees, highlight wrong objects (furniture, UI elements, etc.), or require color recalibration for your specific setup, lighting, or graphics settings
-- Filters are continuously being improved but false positives and false negatives are still common
-- Simple timing-based wait system (doesn't detect actual game state)
-- No error recovery or advanced state detection
-- Firemaking module stops when inventory is empty (no banking yet)
+- **Tree detection is still not perfect** - while significantly improved with multiple filters and confirmation systems, the bot may occasionally miss trees, click wrong objects, or require manual intervention. However, it's **good enough to set up and run with minimal management** - you can step away briefly, but occasional monitoring is recommended.
+- No banking implementation - woodcutter stops when inventory is full, firemaking stops when inventory is empty
 - Fire burn time in OSRS is constant; leveling Firemaking only unlocks higher-tier logs and increases light success rate, not burn speed
+- Color detection may require recalibration for different graphics settings, lighting conditions, or custom client modifications
 
 This serves as a learning tool to understand:
 
@@ -209,17 +240,47 @@ stardust/
 
 If the bot isn't finding trees, it's usually because the color range doesn't match your specific setup. Recalibrating ensures the color detection matches your game's appearance.
 
+
+
+## Recent Improvements
+
+**Anti-Detection Enhancements:**
+- ✅ **Context-aware mouse behavior** - Different movement profiles for skilling, inventory, and banking actions
+- ✅ **Misclick simulation** - Rare deliberate misclicks followed by correction (configurable probability)
+- ✅ **Session-level behavioral variance** - Varies focus level and wander chance per session to simulate human inconsistency
+- ✅ **Harmless repositioning** - Occasionally moves character slightly to break repetitive patterns
+- ✅ **Top-left action text confirmation** - Uses OCR and template matching to verify "Chop down Tree" before clicking
+
+**Tree Detection Improvements:**
+- ✅ **Multiple geometric filters** - Aspect ratio, size, shape analysis, edge complexity
+- ✅ **Physics-based filters** - Vertical orientation, ground position exclusion, horizontal object rejection
+- ✅ **Proximity clustering** - Prefers trees near other trees
+- ✅ **Failed tree tracking** - Automatically skips trees that don't yield logs
+- ✅ **Camera rotation** - Automatically rotates camera when no trees are found
+- ✅ **Vertical tree band filter** - Excludes indoor furniture and top-screen clutter
+
+**Inventory Management:**
+- ✅ **Slot-by-slot scanning** - Scans each of 28 inventory slots individually
+- ✅ **Occupied slot detection** - Accounts for non-log items (axe, tools, etc.)
+- ✅ **Inventory-based cutting logic** - Waits for new log to appear before moving to next tree
+- ✅ **Improved full detection** - More accurate inventory full detection
+
+**Firemaking Improvements:**
+- ✅ **Stuck detection and movement** - Automatically moves character if unable to place fire
+- ✅ **Double-lighting prevention** - Prevents concurrent fire lighting attempts
+- ✅ **Consistent log counting** - Unified method across all functions
+- ✅ **Improved fire detection** - Multiple verification checks
+
 ## TODO / Planned Features
 
 This project is very much a work-in-progress. Planned improvements include:
 
 - **Pathfinding** - Automatic navigation to trees and banks
 - **Banking** - Full banking implementation to deposit logs and withdraw items
-- **Better Tree Detection** - Improved detection and distinction between different tree types (oak, willow, maple, yew, magic, etc.)
-- **Smart Tree Filtering** - Tree logic will use player stats to automatically ignore certain trees depending on the player's woodcutting level (e.g., ignore oak trees if level is too low)
+- **Better Tree Detection** - Further refinement of detection algorithms (tree detection is still not perfect)
+- **Smart Tree Filtering** - Tree logic will use player stats to automatically ignore certain trees depending on the player's woodcutting level
 - **State Detection** - Detect actual game states (cutting animation, inventory updates) instead of timers
 - **Error Recovery** - Handle edge cases and recover from errors gracefully
-- **Advanced Filtering** - More sophisticated filters to distinguish trees from other objects (furniture, UI elements, etc.)
 
 ## Documentation
 
