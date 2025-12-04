@@ -1,6 +1,6 @@
 # Stardust - Educational RuneScape Bot
 
-**Stardust** is a proof-of-concept woodcutting bot for educational purposes.
+**Stardust** is a proof-of-concept RuneScape automation bot for educational purposes. While its initial focus is woodcutting, it is designed as a general framework and supports more than just woodcutting tasks.
 
 **🚨 CRITICAL WARNING - USE AT YOUR OWN RISK 🚨**
 
