@@ -31,6 +31,8 @@ This project is **FOR EDUCATIONAL PURPOSES ONLY**. It was created to understand 
 
 **Stardust** is a general-purpose RuneScape bot framework designed for all skills and activities. Currently, woodcutting and firemaking are the first implemented features, demonstrating fundamental bot mechanics using screen-scraping, color detection, and template matching.
 
+**Note:** The default configuration for colors, screen dimensions, and other settings assumes a 1920x1080 display using the Fixed Classic Layout with Stretched Mode enabled. If you use a different setup, you can adjust these settings using the provided tools.
+
 **Current Features:**
 
 **Woodcutting Module (`scripts/woodcutter.py`):**
