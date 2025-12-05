@@ -4,7 +4,7 @@ Includes anti-detection tuning knobs for human-like behavior.
 """
 
 # Preferred tree type (None = auto-select based on level in player_stats)
-PREFERRED_TREE_TYPE = None
+PREFERRED_TREE_TYPE = "marker"
 
 # Log handling
 LOG_DISPOSAL_METHOD = "bank"  # "bank" or "drop"

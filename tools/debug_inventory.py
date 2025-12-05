@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import mss
 import pyautogui
-from woodcutter import INVENTORY_AREA, LOG_ICON_PATH
+from woodcutter import INVENTORY_AREA, LOG_ICON_PATH, EMPTY_SLOT_PATH
 
 # Create debug output directory
 DEBUG_OUTPUT_DIR = "debug"
@@ -126,49 +126,75 @@ def visualize_matches(screen_bgr):
     print("Creating Visual Debug Image")
     print("=" * 60)
     
-    if not os.path.exists(LOG_ICON_PATH):
-        return
-    
-    template = cv2.imread(LOG_ICON_PATH, cv2.IMREAD_UNCHANGED)
-    if template is None:
-        return
-    
-    # Convert template
-    if len(template.shape) == 3 and template.shape[2] == 4:
-        template = cv2.cvtColor(template, cv2.COLOR_BGRA2BGR)
-    elif len(template.shape) == 2:
-        template = cv2.cvtColor(template, cv2.COLOR_GRAY2BGR)
-    
-    # Find matches with lower threshold
-    result = cv2.matchTemplate(screen_bgr, template, cv2.TM_CCOEFF_NORMED)
-    threshold = 0.6
-    locations = np.where(result >= threshold)
-    
-    # Draw rectangles around matches
     debug_img = screen_bgr.copy()
-    h, w = template.shape[:2]
     
-    matches_found = 0
-    for pt in zip(*locations[::-1]):
-        matches_found += 1
-        cv2.rectangle(debug_img, pt, (pt[0] + w, pt[1] + h), (0, 255, 0), 2)
-        # Get match confidence
-        match_val = result[pt[1], pt[0]]
-        cv2.putText(debug_img, f"{match_val:.2f}", (pt[0], pt[1] - 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    # Draw log matches
+    if os.path.exists(LOG_ICON_PATH):
+        template = cv2.imread(LOG_ICON_PATH, cv2.IMREAD_UNCHANGED)
+        if template is not None:
+            # Convert template
+            if len(template.shape) == 3 and template.shape[2] == 4:
+                template = cv2.cvtColor(template, cv2.COLOR_BGRA2BGR)
+            elif len(template.shape) == 2:
+                template = cv2.cvtColor(template, cv2.COLOR_GRAY2BGR)
+            
+            # Find matches with lower threshold
+            result = cv2.matchTemplate(screen_bgr, template, cv2.TM_CCOEFF_NORMED)
+            threshold = 0.6
+            locations = np.where(result >= threshold)
+            
+            h, w = template.shape[:2]
+            matches_found = 0
+            for pt in zip(*locations[::-1]):
+                matches_found += 1
+                cv2.rectangle(debug_img, pt, (pt[0] + w, pt[1] + h), (0, 255, 0), 2)
+                # Get match confidence
+                match_val = result[pt[1], pt[0]]
+                cv2.putText(debug_img, f"L:{match_val:.2f}", (pt[0], pt[1] - 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+            
+            print(f"  Found {matches_found} log match(es) with threshold {threshold}")
+    
+    # Draw empty slot matches
+    empty_matches = 0
+    if os.path.exists(EMPTY_SLOT_PATH):
+        empty_template = cv2.imread(EMPTY_SLOT_PATH, cv2.IMREAD_UNCHANGED)
+        if empty_template is not None:
+            # Convert template
+            if len(empty_template.shape) == 3 and empty_template.shape[2] == 4:
+                empty_template = cv2.cvtColor(empty_template, cv2.COLOR_BGRA2BGR)
+            elif len(empty_template.shape) == 2:
+                empty_template = cv2.cvtColor(empty_template, cv2.COLOR_GRAY2BGR)
+            
+            # Find empty slot matches
+            result = cv2.matchTemplate(screen_bgr, empty_template, cv2.TM_CCOEFF_NORMED)
+            threshold = 0.7
+            locations = np.where(result >= threshold)
+            
+            h, w = empty_template.shape[:2]
+            for pt in zip(*locations[::-1]):
+                empty_matches += 1
+                cv2.rectangle(debug_img, pt, (pt[0] + w, pt[1] + h), (255, 0, 0), 1)
+                # Get match confidence
+                match_val = result[pt[1], pt[0]]
+                cv2.putText(debug_img, f"E:{match_val:.2f}", (pt[0], pt[1] + h + 12),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
+            
+            print(f"  Found {empty_matches} empty slot match(es) with threshold {threshold}")
+            print(f"  Calculated occupied: {28 - empty_matches} slots")
     
     # Save debug image
     debug_path = os.path.join(DEBUG_OUTPUT_DIR, "inventory_matches_debug.png")
     cv2.imwrite(debug_path, debug_img)
     print(f"✓ Saved debug image with matches: {debug_path}")
-    print(f"  Found {matches_found} potential match(es) with threshold {threshold}")
+    print(f"  Green boxes = logs, Red boxes = empty slots")
     
-    if matches_found == 0:
+    if matches_found == 0 and empty_matches == 0:
         print("\n⚠ No matches found even with low threshold.")
         print("  Possible issues:")
         print("  1. Inventory area coordinates are wrong")
-        print("  2. Template image doesn't match current log appearance")
-        print("  3. Logs might be in a different inventory slot than expected")
+        print("  2. Template images don't match current appearance")
+        print("  3. Items might be in different slots than expected")
 
 def show_inventory_coords():
     """Help user find correct inventory coordinates"""

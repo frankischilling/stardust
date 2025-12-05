@@ -142,6 +142,8 @@ stardust/
 
 **Note:** Most scripts don't require manual editing. Just use the built-in calibration tools to set up your inventory and screen coordinates. The tools **automatically update** the configuration files for you!
 
+**Woodcutter note:** The woodcutter now supports **marker mode only**. Use the RuneLite Object Marker plugin with filled red highlights on trees (see Marker Mode section below).
+
 1. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
@@ -151,10 +153,8 @@ stardust/
    See `docs/TUTORIAL.md` for complete step-by-step instructions.
 
 3. **Configure your character:**
-   - Edit `config/player_stats.py` - Update your **Woodcutting Level** (most important!)
-   - If using firemaking, also update your **Firemaking Level** (burn time is fixed; level mainly unlocks higher-tier logs and improves light chance)
-   - Edit `config/player_config.py` - Set preferences (optional, has sensible defaults)
-   - The bot automatically selects the best tree type based on your level
+   - (Not implemented yet)
+
 
 4. **Calibrate your setup (automated):**
    
@@ -198,6 +198,20 @@ stardust/
    python tools/test_detection.py
    ```
    This verifies that tree detection and inventory detection are working correctly.
+
+## Marker Mode (RuneLite Object Marker)
+If you prefer marker-based detection instead of trunk colors:
+- Install and enable the RuneLite **Object Marker** plugin.
+- Mark trees with a **filled red highlight** (255,0,0); the bot’s marker HSV ranges cover both the 0–25 and 170–180 hue bands.
+- In `config/player_config.py`, set `PREFERRED_TREE_TYPE = "marker"`.
+- Ensure `templates/log_icon.png` is present and create `templates/empty_slot.png` (screenshot of a clean, empty inventory slot). The bot uses the empty-slot template to count how many slots are free, which makes full-inventory detection much more reliable for marker mode.
+- Make sure you **have an axe equipped** before starting.
+- Set the camera high and angled down so the highlighted trees are clearly visible in the game area.
+- Run the woodcutter in debug first to confirm detections:
+  ```bash
+  python scripts/woodcutter.py
+  ```
+  Check the `debug/` images; green boxes on red highlights mean marker detection is working.
 
 6. **Run the bot (AT YOUR OWN RISK):**
    

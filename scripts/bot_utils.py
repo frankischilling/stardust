@@ -49,7 +49,8 @@ def find_all_colors(color_lower, color_upper, game_area, min_area=400, max_area=
                     min_aspect_ratio=0.4, max_aspect_ratio=2.5, min_height=30,
                     min_width=0, max_width=300, max_height=400, exclude_ui_left=None, 
                     exclude_ui_bottom=None, exclude_ui_right_edge=None,
-                    world_y_min=None, world_y_max=None, relaxed_filters=False):
+                    world_y_min=None, world_y_max=None, relaxed_filters=False,
+                    allow_wide_aspect=False, secondary_color_range=None):
     """
     Finds ALL valid objects in the game area by HSV color range.
     
@@ -70,8 +71,13 @@ def find_all_colors(color_lower, color_upper, game_area, min_area=400, max_area=
     # Convert to HSV
     screen_hsv = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2HSV)
     
-    # Create mask for color range
+    # Create mask for primary color range
     mask = cv2.inRange(screen_hsv, np.array(color_lower), np.array(color_upper))
+    # Optional secondary range (helps catch hue wraparound like bright reds near 180)
+    if secondary_color_range:
+        low2, up2 = secondary_color_range
+        mask2 = cv2.inRange(screen_hsv, np.array(low2), np.array(up2))
+        mask = cv2.bitwise_or(mask, mask2)
     
     # Find contours
     contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -106,23 +112,24 @@ def find_all_colors(color_lower, color_upper, game_area, min_area=400, max_area=
         # This is a fundamental physical property - trees grow vertically, ground objects are horizontal
         # Standing trees typically have aspect ratios of 0.3-0.65 (much taller than wide)
         # Fallen logs, even when detected at an angle, will be closer to 0.8-0.95 (more square/wide)
-        if aspect_ratio >= 1.0:
-            continue  # Trees are NEVER wider than tall - reject all wide/flat objects (ground, windows, tables, etc.)
-        
-        # CRITICAL: Reject objects that are too square/horizontal (fallen logs, ground objects)
-        # Even with aspect < 1.0, if width is close to height, it's likely a fallen log
-        if aspect_ratio > 0.70:  # Too square/horizontal for a standing tree
-            continue  # Ground objects, fallen logs, barrels, boxes - trees are MUCH taller than wide
-        
-        # --- ADDITIONAL FILTER: Reject horizontal/fallen objects (more aggressive) ---
-        # Fallen logs and ground items are long and horizontal (width >> height)
-        # Even if aspect_ratio < 0.70, check if object is suspiciously wide relative to its height
-        if w > h * 1.3 and area > 1500:  # More aggressive - catches more fallen logs
-            # But allow if it's clearly vertical (very tall relative to width)
-            if h < w * 0.8:  # Height is less than 80% of width = too horizontal
-                continue  # Too horizontal - likely fallen log or ground object
-        # --- end horizontal object filter ---
-        # --- end physics-based aspect ratio filter ---
+        if not allow_wide_aspect:
+            if aspect_ratio >= 1.0:
+                continue  # Trees are NEVER wider than tall - reject all wide/flat objects (ground, windows, tables, etc.)
+            
+            # CRITICAL: Reject objects that are too square/horizontal (fallen logs, ground objects)
+            # Even with aspect < 1.0, if width is close to height, it's likely a fallen log
+            if aspect_ratio > 0.70:  # Too square/horizontal for a standing tree
+                continue  # Ground objects, fallen logs, barrels, boxes - trees are MUCH taller than wide
+            
+            # --- ADDITIONAL FILTER: Reject horizontal/fallen objects (more aggressive) ---
+            # Fallen logs and ground items are long and horizontal (width >> height)
+            # Even if aspect_ratio < 0.70, check if object is suspiciously wide relative to its height
+            if w > h * 1.3 and area > 1500:  # More aggressive - catches more fallen logs
+                # But allow if it's clearly vertical (very tall relative to width)
+                if h < w * 0.8:  # Height is less than 80% of width = too horizontal
+                    continue  # Too horizontal - likely fallen log or ground object
+            # --- end horizontal object filter ---
+            # --- end physics-based aspect ratio filter ---
         
         # Check min/max aspect ratio bounds (after rejecting wide/square objects)
         if aspect_ratio < min_aspect_ratio or aspect_ratio > max_aspect_ratio:
@@ -224,7 +231,7 @@ def find_all_colors(color_lower, color_upper, game_area, min_area=400, max_area=
             # Even in relaxed mode, reject very flat objects (ground objects, fallen logs)
             # Trees are always taller than wide, even when distant
             # Standing trees: 0.3-0.65, Fallen logs: 0.8-0.95
-            if aspect_ratio > 0.75:  # Stricter than before - reject fallen logs even in relaxed mode
+            if not allow_wide_aspect and aspect_ratio > 0.75:  # Stricter than before - reject fallen logs even in relaxed mode
                 continue  # Too flat/square - likely ground object or fallen log, not a tree
         
         # Check UI exclusion areas
@@ -337,7 +344,8 @@ def find_color(color_lower, color_upper, game_area, min_area=400, max_area=50000
                min_aspect_ratio=0.4, max_aspect_ratio=2.5, min_height=30,
                min_width=0, max_width=300, max_height=400, exclude_ui_left=None, 
                exclude_ui_bottom=None, exclude_ui_right_edge=None,
-               world_y_min=None, world_y_max=None, relaxed_filters=False):
+               world_y_min=None, world_y_max=None, relaxed_filters=False,
+               allow_wide_aspect=False, secondary_color_range=None):
     """
     Finds the largest valid object in the game area by HSV color range.
     
@@ -364,6 +372,8 @@ def find_color(color_lower, color_upper, game_area, min_area=400, max_area=50000
         world_y_min=world_y_min,
         world_y_max=world_y_max,
         relaxed_filters=relaxed_filters,
+        allow_wide_aspect=allow_wide_aspect,
+        secondary_color_range=secondary_color_range,
     )
     return results[0] if results else None
 
@@ -372,7 +382,8 @@ def visualize_color_detection(color_lower, color_upper, game_area, min_area=400,
                               min_width=0, max_width=300, max_height=400, exclude_ui_left=None,
                               exclude_ui_bottom=None, exclude_ui_right_edge=None,
                               world_y_min=None, world_y_max=None, relaxed_filters=False,
-                              output_dir="debug", save_images=True):
+                              output_dir="debug", save_images=True,
+                              allow_wide_aspect=False, secondary_color_range=None):
     """
     Visualizes what the bot detects when searching for objects by color.
     Creates debug images showing the detection process.
@@ -401,8 +412,12 @@ def visualize_color_detection(color_lower, color_upper, game_area, min_area=400,
     # Convert to HSV
     screen_hsv = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2HSV)
     
-    # Create mask for color range
+    # Create mask for color range (optionally combine secondary range for hue wraparound)
     mask = cv2.inRange(screen_hsv, np.array(color_lower), np.array(color_upper))
+    if secondary_color_range:
+        low2, up2 = secondary_color_range
+        mask2 = cv2.inRange(screen_hsv, np.array(low2), np.array(up2))
+        mask = cv2.bitwise_or(mask, mask2)
     
     # Find contours
     contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -456,7 +471,7 @@ def visualize_color_detection(color_lower, color_upper, game_area, min_area=400,
         aspect_ratio = w / h
         
         # HARD physics rule: trees stand upright. Even relaxed mode rejects wide/square objects.
-        if aspect_ratio >= 0.97:
+        if not allow_wide_aspect and aspect_ratio >= 0.97:
             all_contours[-1]['reason'] = f'Too square/wide for tree (aspect={aspect_ratio:.2f})'
             invalid_contours.append(all_contours[-1])
             continue

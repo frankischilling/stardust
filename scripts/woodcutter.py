@@ -66,6 +66,8 @@ UI_EXCLUSION_RIGHT_EDGE = GAME_AREA["left"] + GAME_AREA["width"] * 0.5  # Exclud
 # Path to the image of a log in your inventory
 # Take a screenshot of a single log icon and save it as log_icon.png
 LOG_ICON_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "log_icon.png")
+# Path to an empty inventory slot template (full empty slot image)
+EMPTY_SLOT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "empty_slot.png")
 
 # Tree type configuration
 # This will be auto-set from player_config.py if available
@@ -76,6 +78,15 @@ LOG_ICON_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templa
 # - "maple": Level 45 - 60 seconds per log, multiple logs per tree
 # - "yew": Level 60 - 114 seconds per log, multiple logs per tree
 # - "magic": Level 75 - 234 seconds per log, multiple logs per tree
+# - "marker": Use RuneLite object marker color instead of trunk HSV
+
+# Marker-mode HSV (object marker highlight). Calibrated for red marker fill (255,0,0).
+# We include a second range to catch the hue wraparound near 180 for bright reds.
+# Lower S/V tightened enough to avoid UI bleed but loose enough for semi-transparent fills.
+MARKER_COLOR_LOWER = (0, 120, 120)
+MARKER_COLOR_UPPER = (25, 255, 255)
+MARKER_COLOR_SECONDARY_LOWER = (170, 120, 120)
+MARKER_COLOR_SECONDARY_UPPER = (180, 255, 255)
 
 # Auto-set from player config if available
 if USE_PLAYER_CONFIG and player_stats:
@@ -86,16 +97,19 @@ if USE_PLAYER_CONFIG and player_stats:
         # Auto-select best tree based on level
         TREE_TYPE = player_stats.get_best_available_tree()
     
-    # Verify player can actually cut this tree type
-    available_trees = player_stats.get_available_tree_types()
-    if TREE_TYPE not in available_trees:
-        print(f"⚠ Warning: Cannot cut {TREE_TYPE} trees at level {player_stats.WOODCUTTING_LEVEL}")
-        print(f"  Available trees: {available_trees}")
-        TREE_TYPE = available_trees[0] if available_trees else "regular"
-        print(f"  Using {TREE_TYPE} instead")
+    # Verify player can actually cut this tree type (skip validation for marker mode)
+    if TREE_TYPE != "marker":
+        available_trees = player_stats.get_available_tree_types()
+        if TREE_TYPE not in available_trees:
+            print(f"⚠ Warning: Cannot cut {TREE_TYPE} trees at level {player_stats.WOODCUTTING_LEVEL}")
+            print(f"  Available trees: {available_trees}")
+            TREE_TYPE = available_trees[0] if available_trees else "regular"
+            print(f"  Using {TREE_TYPE} instead")
 else:
     # Default fallback if config not available
     TREE_TYPE = "regular"
+# Force marker mode only (marker-based detection)
+TREE_TYPE = "marker"
 
 # Inventory area (typically bottom right of game window)
 # Calibrated using calibrate_inventory.py
@@ -103,7 +117,7 @@ INVENTORY_AREA = {
     "top": 430,
     "left": 1354,
     "width": 445,
-    "height": 505
+    "height": 560  # Increased to capture bottom row fully
 }
 
 # --- State Management ---
@@ -174,14 +188,25 @@ def check_inventory_full():
         print(f"Inventory check: Found {max_log_count} logs (not full)")
         return False
     
-    # Scan each inventory slot for logs AND occupied slots
+    # Use count_inventory_items as PRIMARY method (same as debug script) - more accurate with grouping
+    log_counts = []
     max_log_slots_found = 0
     occupied_slots = 0
     
-    # Try multiple thresholds to catch logs that might be slightly different
-    thresholds = [0.7, 0.8, 0.6, 0.9, 0.5]  # Lower thresholds first to catch more logs
+    # Count logs using multiple thresholds and take a robust median to avoid overcounting
+    for threshold in [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8]:
+        count = bot_utils.count_inventory_items(LOG_ICON_PATH, INVENTORY_AREA, threshold=threshold)
+        log_counts.append(count)
+        if count > max_log_slots_found:
+            max_log_slots_found = count
+    if log_counts:
+        # Median is less sensitive to occasional duplicate matches than max
+        log_counts_sorted = sorted(log_counts)
+        median_idx = len(log_counts_sorted) // 2
+        median_log_count = log_counts_sorted[median_idx]
+        max_log_slots_found = median_log_count
     
-    # Check each of the 28 inventory slots
+    # Count occupied slots using per-slot color analysis (for non-log items)
     for row in range(7):
         for col in range(4):
             # Calculate the slot area (relative to captured image)
@@ -196,61 +221,119 @@ def check_inventory_full():
             if slot_region.size == 0:
                 continue
             
-            # Check if slot is occupied (has an item)
-            # Empty slots are typically darker and have low variance
-            # Occupied slots have items with more color/variance
+            # Check if slot is occupied (has an item) using color analysis
             slot_hsv = cv2.cvtColor(slot_region, cv2.COLOR_BGR2HSV)
             mean_saturation = np.mean(slot_hsv[:, :, 1])
             mean_value = np.mean(slot_hsv[:, :, 2])
             std_value = np.std(slot_hsv[:, :, 2])
             std_saturation = np.std(slot_hsv[:, :, 1])
+            bright_frac = np.mean(slot_hsv[:, :, 2] > 110)
+            colorful_frac = np.mean(slot_hsv[:, :, 1] > 60)
             
-            # More accurate occupied slot detection:
-            # Empty slots: low saturation, low value, low variance
-            # Occupied slots: higher saturation OR higher value with variance
-            # Stricter thresholds to avoid false positives
+            # Moderately strict to reduce overcounts while still catching filled slots
             is_occupied = (
-                (mean_saturation > 40 and std_saturation > 10) or  # Has color variation
-                (mean_value > 80 and std_value > 20) or  # Bright with variation
-                (mean_saturation > 25 and mean_value > 70 and std_value > 15)  # Moderate color + brightness
+                ((bright_frac > 0.10 and colorful_frac > 0.08) and (std_value > 12 or std_saturation > 7)) or
+                ((mean_saturation > 50 and mean_value > 115) and (std_saturation > 9 and std_value > 16)) or
+                (mean_value > 165 and std_value > 22)
             )
             
             if is_occupied:
                 occupied_slots += 1
-            
-            # Check if log template exists in this slot using template matching on the captured image
-            # This avoids calling find_image which would capture again
-            slot_has_log = False
-            for threshold in thresholds:
-                # Template matching on the slot region
-                if slot_region.shape[0] >= log_template.shape[0] and slot_region.shape[1] >= log_template.shape[1]:
-                    result = cv2.matchTemplate(slot_region, log_template, cv2.TM_CCOEFF_NORMED)
-                    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-                    
-                    if max_val >= threshold:
-                        slot_has_log = True
-                        break
-            
-            if slot_has_log:
-                max_log_slots_found += 1
+    
+    # Ensure occupied is at least as high as log count (logs are occupied slots)
+    occupied_slots = max(occupied_slots, max_log_slots_found)
+
+    # Empty slot detection using template - PRIMARY method when available
+    empty_slots = None
+    empty_slot_count = 0
+    # Check if empty slot template exists - try multiple path resolutions
+    empty_slot_available = os.path.exists(EMPTY_SLOT_PATH)
+    temp_empty_path = EMPTY_SLOT_PATH
+    
+    if not empty_slot_available:
+        # Try relative path from current working directory
+        rel_path = os.path.join("templates", "empty_slot.png")
+        if os.path.exists(rel_path):
+            empty_slot_available = True
+            temp_empty_path = rel_path
+        else:
+            # Try absolute path resolution
+            abs_path = os.path.abspath(EMPTY_SLOT_PATH)
+            if os.path.exists(abs_path):
+                empty_slot_available = True
+                temp_empty_path = abs_path
+    
+    if empty_slot_available:
+        try:
+            # Try a wider range of thresholds to catch empty slots
+            for threshold in [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9]:
+                count = bot_utils.count_inventory_items(temp_empty_path, INVENTORY_AREA, threshold=threshold)
+                if count > empty_slot_count:
+                    empty_slot_count = count
+            # Treat 0 empty slots as a valid detection (means full)
+            empty_slots = empty_slot_count
+            # Calculate occupied from empty slots (most reliable)
+            occupied_from_empty = max(0, 28 - empty_slots)
+            occupied_slots = occupied_from_empty
+            # Recalculate log count more carefully when we have empty slot data
+            refined_log_count = 0
+            for threshold in [0.65, 0.7, 0.75, 0.8]:
+                count = bot_utils.count_inventory_items(LOG_ICON_PATH, INVENTORY_AREA, threshold=threshold)
+                if count > refined_log_count:
+                    refined_log_count = count
+            # Use the refined count, capped to occupied slots (can't have more logs than occupied slots)
+            max_log_slots_found = min(refined_log_count, occupied_slots)
+        except Exception as e:
+            print(f"  ⚠ Warning: Could not count empty slots ({e})")
+            import traceback
+            traceback.print_exc()
+            empty_slots = None
+    else:
+        # Debug: show what paths were checked
+        print(f"  ⚠ Empty slot template not found. Checked paths:")
+        print(f"     - {EMPTY_SLOT_PATH} (exists: {os.path.exists(EMPTY_SLOT_PATH)})")
+        rel_path = os.path.join("templates", "empty_slot.png")
+        print(f"     - {rel_path} (exists: {os.path.exists(rel_path)})")
+        abs_path = os.path.abspath(EMPTY_SLOT_PATH)
+        print(f"     - {abs_path} (exists: {os.path.exists(abs_path)})")
+    
+    # Global log count fallback ONLY if empty slot template not available
+    if empty_slots is None:
+        try:
+            global_log_count = 0
+            for threshold in [0.5, 0.55, 0.6, 0.65, 0.7, 0.45, 0.4, 0.35, 0.75, 0.8, 0.9]:
+                count = bot_utils.count_inventory_items(LOG_ICON_PATH, INVENTORY_AREA, threshold=threshold)
+                if count > global_log_count:
+                    global_log_count = count
+            # Use global count as fallback but don't inflate beyond per-slot count
+            max_log_slots_found = max(max_log_slots_found, min(global_log_count, 28))
+            # Only update occupied if we don't have empty slot data
+            occupied_slots = max(occupied_slots, max_log_slots_found)
+        except Exception:
+            pass
+    else:
+        # When we have empty slot data, ensure log count doesn't exceed occupied
+        max_log_slots_found = min(max_log_slots_found, occupied_slots)
     
     # Decision logic:
     # - If 27+ occupied slots: definitely full
     # - If 26+ logs: likely full (26 logs + 1 axe = 27 items = effectively full)
     # - If 26+ occupied slots AND 25+ logs: likely full (accounting for axe)
     
-    print(f"Inventory check: Found {max_log_slots_found} log slots, {occupied_slots} occupied slots (out of 28)")
+    if empty_slots is not None:
+        print(f"Inventory check: Found {max_log_slots_found} log slots, {occupied_slots} occupied slots, {empty_slots} empty (out of 28) [using empty slot template]")
+    else:
+        print(f"Inventory check: Found {max_log_slots_found} log slots, {occupied_slots} occupied slots (out of 28) [empty slot template not available]")
     
-    if occupied_slots >= 27:
-        print(f"Inventory check: FULL! {occupied_slots} occupied slots (27+ = full)")
+    # Only stop when completely full (28 occupied slots)
+    # Continue cutting until the very last slot is filled
+    if occupied_slots >= 28:
+        print(f"Inventory check: FULL! {occupied_slots} occupied slots (28 = completely full)")
         return True
     
-    if max_log_slots_found >= 26:
-        print(f"Inventory check: FULL! Found {max_log_slots_found} logs (26+ logs = effectively full with tool)")
-        return True
-    
-    if occupied_slots >= 26 and max_log_slots_found >= 25:
-        print(f"Inventory check: FULL! {occupied_slots} occupied slots with {max_log_slots_found} logs (likely full with tool)")
+    # Also stop if we have 27+ logs (accounting for tool and other items, this means full)
+    if max_log_slots_found >= 27:
+        print(f"Inventory check: FULL! Found {max_log_slots_found} logs (27+ logs = full)")
         return True
     
     return False
@@ -280,8 +363,9 @@ def find_and_click_tree():
     If you're level 1 but the bot clicks oak trees, your color range is too broad.
     """
     global _last_clicked_trees, _failed_trees
-    # CRITICAL: Verify player can actually cut this tree type
-    if USE_PLAYER_CONFIG and player_stats:
+    # CRITICAL: Verify player can actually cut this tree type (skip for marker mode)
+    marker_mode = TREE_TYPE == "marker"
+    if USE_PLAYER_CONFIG and player_stats and not marker_mode:
         if not player_stats.can_cut_tree_type(TREE_TYPE):
             print(f"  ❌ ERROR: Cannot cut {TREE_TYPE} trees at level {player_stats.WOODCUTTING_LEVEL}")
             available = player_stats.get_available_tree_types()
@@ -299,50 +383,58 @@ def find_and_click_tree():
     
     print(f"Looking for a {TREE_TYPE} tree...")
     
-    # Use tree-type-specific colors if available, otherwise use default
-    # This allows you to configure different colors for different tree types
-    color_lower = TREE_COLOR_LOWER
-    color_upper = TREE_COLOR_UPPER
-    
-    # Check if tree-type-specific colors are defined
-    if TREE_TYPE == "oak" and 'OAK_COLOR_LOWER' in globals():
-        color_lower = OAK_COLOR_LOWER
-        color_upper = OAK_COLOR_UPPER
-        print("  Using oak-specific color range")
-    elif TREE_TYPE == "willow" and 'WILLOW_COLOR_LOWER' in globals():
-        color_lower = WILLOW_COLOR_LOWER
-        color_upper = WILLOW_COLOR_UPPER
-        print("  Using willow-specific color range")
-    elif TREE_TYPE == "maple" and 'MAPLE_COLOR_LOWER' in globals():
-        color_lower = MAPLE_COLOR_LOWER
-        color_upper = MAPLE_COLOR_UPPER
-        print("  Using maple-specific color range")
-    elif TREE_TYPE == "yew" and 'YEW_COLOR_LOWER' in globals():
-        color_lower = YEW_COLOR_LOWER
-        color_upper = YEW_COLOR_UPPER
-        print("  Using yew-specific color range")
-    elif TREE_TYPE == "magic" and 'MAGIC_COLOR_LOWER' in globals():
-        color_lower = MAGIC_COLOR_LOWER
-        color_upper = MAGIC_COLOR_UPPER
-        print("  Using magic-specific color range")
+    # Use marker mode or tree-type-specific colors
+    if marker_mode:
+        color_lower = MARKER_COLOR_LOWER
+        color_upper = MARKER_COLOR_UPPER
+        print("  Using object marker color range")
     else:
-        print("  Using default color range (works for regular trees)")
+        # Use tree-type-specific colors if available, otherwise use default
+        # This allows you to configure different colors for different tree types
+        color_lower = TREE_COLOR_LOWER
+        color_upper = TREE_COLOR_UPPER
+        
+        # Check if tree-type-specific colors are defined
+        if TREE_TYPE == "oak" and 'OAK_COLOR_LOWER' in globals():
+            color_lower = OAK_COLOR_LOWER
+            color_upper = OAK_COLOR_UPPER
+            print("  Using oak-specific color range")
+        elif TREE_TYPE == "willow" and 'WILLOW_COLOR_LOWER' in globals():
+            color_lower = WILLOW_COLOR_LOWER
+            color_upper = WILLOW_COLOR_UPPER
+            print("  Using willow-specific color range")
+        elif TREE_TYPE == "maple" and 'MAPLE_COLOR_LOWER' in globals():
+            color_lower = MAPLE_COLOR_LOWER
+            color_upper = MAPLE_COLOR_UPPER
+            print("  Using maple-specific color range")
+        elif TREE_TYPE == "yew" and 'YEW_COLOR_LOWER' in globals():
+            color_lower = YEW_COLOR_LOWER
+            color_upper = YEW_COLOR_UPPER
+            print("  Using yew-specific color range")
+        elif TREE_TYPE == "magic" and 'MAGIC_COLOR_LOWER' in globals():
+            color_lower = MAGIC_COLOR_LOWER
+            color_upper = MAGIC_COLOR_UPPER
+            print("  Using magic-specific color range")
+        else:
+            print("  Using default color range (works for regular trees)")
     
-    # Filter parameters based on tree type:
+    # Filter parameters based on tree type (marker uses lenient size)
     # ⚠ IMPORTANT: Regular and oak trees have similar colors but DIFFERENT SIZES!
     # - Regular trees (level 1): Smaller - use min_area=400-800, max_area=8000, min_height=30
     # - Oak trees (level 15): Larger - use min_area=3000, max_area=50000, min_height=55
     # Size filtering is the KEY to distinguishing tree types when colors are similar!
-    if TREE_TYPE == "regular":
-        # Regular trees are smaller - filter out larger oak trees
-        # Lower thresholds to detect trees that are far away (zoomed out)
-        # Still filters tiny clutter but allows distant trees
+    if marker_mode:
+        # Marker blobs can vary widely; broaden the scope
+        min_area = 2
+        max_area = 50000
+        min_height = 1
+        print("  Using size filters for MARKER mode (object marker highlights)")
+    elif TREE_TYPE == "regular":
         min_area = 280      # Minimum size - avoid ground clutter while keeping distant trunks
         max_area = 15000    # Allow trunk + canopy to be one contour
         min_height = 15     # Trees should have some height - lowered for zoomed-out trees (was 35)
         print("  Using size filters for REGULAR trees (supports zoomed-out/distant trees)")
     elif TREE_TYPE == "oak":
-        # Oak trees are larger - filter out smaller regular trees
         min_area = 3000     # Minimum size - filters out smaller regular trees!
         max_area = 50000    # Allow large oak trees
         min_height = 55     # Oak trees are taller
@@ -367,20 +459,24 @@ def find_and_click_tree():
         "game_area": GAME_AREA,
         "min_area": min_area,
         "max_area": max_area,
-        "min_aspect_ratio": 0.35,
-        "max_aspect_ratio": 0.70,  # CRITICAL: Much stricter - trees are MUCH taller than wide (0.3-0.65 typical)
+        "min_aspect_ratio": 0.35 if not marker_mode else 0.0,
+        "max_aspect_ratio": 0.70 if not marker_mode else 4.0,  # marker splats can be very wide/tall
         # Standing trees: 0.3-0.65 aspect ratio (much taller than wide)
         # Fallen logs: 0.8-0.95 aspect ratio (more square/wide) - REJECTED
         "min_height": min_height,
-        "max_width": 300,
-        "max_height": 400,
+        "max_width": 300 if not marker_mode else 800,
+        "max_height": 400 if not marker_mode else 800,
         "exclude_ui_left": UI_EXCLUSION_LEFT,
         "exclude_ui_bottom": UI_EXCLUSION_BOTTOM,
         "exclude_ui_right_edge": UI_EXCLUSION_RIGHT_EDGE,
         # Keep detections in the mid-ground band (not sky/top bar, not ground plane clutter)
-        "world_y_min": GAME_AREA["top"] + int(GAME_AREA["height"] * 0.10),
-        "world_y_max": GAME_AREA["top"] + int(GAME_AREA["height"] * 0.82),
-        "relaxed_filters": False,  # strict first pass; fallback will relax
+        "world_y_min": GAME_AREA["top"] + int(GAME_AREA["height"] * 0.10) if not marker_mode else None,
+        "world_y_max": GAME_AREA["top"] + int(GAME_AREA["height"] * 0.82) if not marker_mode else None,
+        "relaxed_filters": True if marker_mode else False,  # marker mode: skip strict filters in primary pass
+        "allow_wide_aspect": True if marker_mode else False,  # marker splats can be round/wide
+        "secondary_color_range": (
+            (MARKER_COLOR_SECONDARY_LOWER, MARKER_COLOR_SECONDARY_UPPER) if marker_mode else None
+        ),
     }
     
     # Debug visualization if enabled
@@ -400,21 +496,32 @@ def find_and_click_tree():
     # Find all valid trees
     all_trees = bot_utils.find_all_colors(**detection_kwargs)
     
-    # Fallback: relax filters to catch small/distant trees
-    # BUT still enforce physics: trees are vertical (taller than wide) and above ground
+    # Fallback: relax filters to catch small/distant trees (more lenient for marker mode)
+    # BUT still enforce physics/UI bands unless marker_mode bypasses aspect checks
     if not all_trees:
         print("No tree found with primary filters. Trying relaxed distant-tree filters...")
         fallback_kwargs = detection_kwargs.copy()
-        fallback_kwargs.update({
-            "min_area": max(60, int(min_area * 0.3)),  # much smaller trunks/canopies
-            "min_height": max(8, int(min_height * 0.5)),
-            "min_aspect_ratio": 0.25,  # allow thinner silhouettes at distance
-            "max_aspect_ratio": 0.75,  # Still enforce physics: trees are taller than wide (reject flat ground objects)
-            # Slightly more lenient (0.75 vs 0.70) for distant trees, but still reject fallen logs (0.8-0.95)
-            "max_width": 340,
-            "max_height": 420,
-            "relaxed_filters": True,  # allow smaller/distant trees only in fallback
-        })
+        if marker_mode:
+            fallback_kwargs.update({
+                "min_area": max(2, int(min_area * 0.2)),
+                "min_height": max(1, int(min_height * 0.3)),
+                "min_aspect_ratio": 0.0,
+                "max_aspect_ratio": 4.0,
+                "max_width": 900,
+                "max_height": 900,
+                "relaxed_filters": True,
+            })
+        else:
+            fallback_kwargs.update({
+                "min_area": max(60, int(min_area * 0.3)),  # much smaller trunks/canopies
+                "min_height": max(8, int(min_height * 0.5)),
+                "min_aspect_ratio": 0.25,  # allow thinner silhouettes at distance
+                "max_aspect_ratio": 0.75,  # Still enforce physics: trees are taller than wide (reject flat ground objects)
+                # Slightly more lenient (0.75 vs 0.70) for distant trees, but still reject fallen logs (0.8-0.95)
+                "max_width": 340,
+                "max_height": 420,
+                "relaxed_filters": True,  # allow smaller/distant trees only in fallback
+            })
         all_trees = bot_utils.find_all_colors(**fallback_kwargs)
         
         if DEBUG_MODE:
@@ -433,15 +540,28 @@ def find_and_click_tree():
         if not all_trees:
             print("  Still no trees found. Trying relaxed filters after camera movement...")
             fallback_kwargs = detection_kwargs.copy()
-            fallback_kwargs.update({
-                "min_area": max(60, int(min_area * 0.3)),
-                "min_height": max(8, int(min_height * 0.5)),
-                "min_aspect_ratio": 0.25,
-                "max_aspect_ratio": 0.75,
-                "max_width": 340,
-                "max_height": 420,
-                "relaxed_filters": True,
-            })
+            if marker_mode:
+                fallback_kwargs.update({
+                    "min_area": max(2, int(min_area * 0.2)),
+                    "min_height": max(1, int(min_height * 0.3)),
+                    "min_aspect_ratio": 0.0,
+                    "max_aspect_ratio": 4.0,
+                    "max_width": 900,
+                    "max_height": 900,
+                    "relaxed_filters": True,
+                    "world_y_min": None,
+                    "world_y_max": None,
+                })
+            else:
+                fallback_kwargs.update({
+                    "min_area": max(60, int(min_area * 0.3)),
+                    "min_height": max(8, int(min_height * 0.5)),
+                    "min_aspect_ratio": 0.25,
+                    "max_aspect_ratio": 0.75,
+                    "max_width": 340,
+                    "max_height": 420,
+                    "relaxed_filters": True,
+                })
             all_trees = bot_utils.find_all_colors(**fallback_kwargs)
         
         if not all_trees:
@@ -574,12 +694,19 @@ def get_log_count():
     Gets the current count of logs in inventory.
     Returns the number of logs found, or 0 if none found.
     """
-    # Try multiple thresholds to ensure we catch all logs
-    for threshold in [0.6, 0.7, 0.8, 0.9, 0.5]:
+    # Try multiple thresholds and return the max count observed
+    max_count = 0
+    for threshold in [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.9, 0.25]:
         count = bot_utils.count_inventory_items(LOG_ICON_PATH, INVENTORY_AREA, threshold=threshold)
-        if count > 0:
-            return count
-    return 0
+        if count > max_count:
+            max_count = count
+    # Fallback: single find_image passes if max_count is still 0
+    if max_count == 0:
+        for threshold in [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.25]:
+            if bot_utils.find_image(LOG_ICON_PATH, threshold=threshold, game_area=INVENTORY_AREA):
+                max_count = 1
+                break
+    return max_count
 
 def wait_for_cutting_completion():
     """
@@ -620,13 +747,21 @@ def wait_for_cutting_completion():
         }
         max_wait = max_wait_times.get(TREE_TYPE, 30.0)
     
+    # Ensure max_wait is set even if tree metadata was missing
+    try:
+        max_wait
+    except NameError:
+        max_wait = 30.0
+    
     # Poll inventory periodically until a new log appears or timeout
     start_time = time.time()
     check_interval = 0.5  # Check every 0.5 seconds
     last_count = initial_count
     
+    check_num = 0
     while (time.time() - start_time) < max_wait:
         current_count = get_log_count()
+        any_log_exists = find_log_in_inventory() is not None
         
         # CRITICAL: Check if inventory is full BEFORE waiting for new log
         if check_inventory_full():
@@ -645,6 +780,18 @@ def wait_for_cutting_completion():
                 print(f"  ⚠ Inventory is now FULL after receiving log!")
                 return False  # Return False to indicate we should stop cutting
             return True
+
+        # Fallback: if we see logs in inventory but the count hasn't budged after several checks,
+        # assume one new log was added (helps marker mode where template counts can be noisy).
+        if any_log_exists and current_count >= initial_count and (check_num >= 4):
+            elapsed = time.time() - start_time
+            assumed_count = max(current_count, initial_count + 1)
+            print(f"  ✓ Log likely received (detected via image). Assuming count: {assumed_count} (was {initial_count}, took {elapsed:.1f}s)")
+            bot_utils.jitter_sleep(random.uniform(0.3, 0.5))
+            if check_inventory_full():
+                print(f"  ⚠ Inventory is now FULL after receiving log!")
+                return False
+            return True
         
         # Log count changed but didn't increase (shouldn't happen, but log it)
         if current_count != last_count:
@@ -653,6 +800,7 @@ def wait_for_cutting_completion():
         
         # Wait before next check
         bot_utils.jitter_sleep(check_interval)
+        check_num += 1
     
     # Timeout - check if we actually got a log despite the timeout
     elapsed = time.time() - start_time
