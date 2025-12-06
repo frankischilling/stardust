@@ -36,6 +36,8 @@ DEBUG_MODE = False  # Set to True to enable debug visualization
 # Path to the image of a log in your inventory
 # Take a screenshot of a single log icon and save it as log_icon.png
 LOG_ICON_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "log_icon.png")
+# Path to an empty inventory slot template (full empty slot image)
+EMPTY_SLOT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "empty_slot.png")
 
 # Path to the image of a tinderbox in your inventory
 # Take a screenshot of a tinderbox icon and save it as tinderbox_icon.png or log_tinderbox.png
@@ -57,8 +59,21 @@ INVENTORY_AREA = {
     "top": 430,
     "left": 1354,
     "width": 445,
-    "height": 505
+    "height": 560  # Match woodcutter to capture bottom row fully
 }
+
+# Chat area (for detecting error messages)
+# Calibrated using calibrate_chat.py
+CHAT_AREA = {
+    "top": 717,
+    "left": 13,
+    "width": 1209,
+    "height": 228
+}
+
+# Path to the "can't fire" chat message template
+# This is the chat message that appears when you can't light a fire
+CANT_FIRE_TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "cant_fire.png")
 
 # Firemaking timing (in seconds)
 # Time to wait for fire to be lit (varies by log type and level)
@@ -69,31 +84,205 @@ FIREMAKING_TIME = 3.5  # Increased from 3.0 to 3.5 seconds (more lenient for reg
 
 def get_log_count():
     """
-    Gets the current count of logs in inventory using consistent method.
+    Gets the current count of logs in inventory using the same logic as woodcutter.py.
+    Uses empty slot templates and per-slot analysis for more accurate counting.
     Returns the number of logs found, or 0 if none found.
-    Uses the same method everywhere for consistency.
+    Optimized to capture inventory only ONCE to reduce delays.
     """
-    # Use consistent method - try count_inventory_items with multiple thresholds
-    # Use the highest count found (most accurate)
-    max_count = 0
-    counts_by_threshold = {}
-    for threshold in [0.7, 0.8, 0.9, 0.6, 0.5]:
-        count = bot_utils.count_inventory_items(LOG_ICON_PATH, INVENTORY_AREA, threshold=threshold)
-        counts_by_threshold[threshold] = count
-        if count > max_count:
-            max_count = count
+    import cv2
+    import mss
+    import numpy as np
     
-    # If counts are inconsistent, use the most common count (more reliable)
-    if len(set(counts_by_threshold.values())) > 1:
-        # Multiple different counts - use the most common one
-        from collections import Counter
-        count_freq = Counter(counts_by_threshold.values())
-        most_common_count = count_freq.most_common(1)[0][0]
-        if most_common_count != max_count:
-            # Use most common if it's reasonable
-            return most_common_count
+    # Single capture delay at the start (only once)
+    bot_utils._maybe_capture_delay()
     
-    return max_count
+    # Calculate slot dimensions (4 columns, 7 rows = 28 slots)
+    slot_width = INVENTORY_AREA["width"] // 4
+    slot_height = INVENTORY_AREA["height"] // 7
+    
+    # Capture the inventory area ONCE for all detection
+    with mss.mss() as sct:
+        screen_img = np.array(sct.grab(INVENTORY_AREA))
+        screen_bgr = cv2.cvtColor(screen_img, cv2.COLOR_BGRA2BGR)
+    
+    # Load log template once
+    log_template = cv2.imread(LOG_ICON_PATH, cv2.IMREAD_COLOR)
+    if log_template is None:
+        return 0
+    
+    # Convert template if needed
+    if len(log_template.shape) == 3:
+        channels = log_template.shape[2]
+        if channels == 4:
+            log_template = cv2.cvtColor(log_template, cv2.COLOR_BGRA2BGR)
+        elif channels == 1:
+            log_template = cv2.cvtColor(log_template, cv2.COLOR_GRAY2BGR)
+    elif len(log_template.shape) == 2:
+        log_template = cv2.cvtColor(log_template, cv2.COLOR_GRAY2BGR)
+    
+    # Count logs using multiple thresholds on the SAME capture (no additional delays)
+    log_counts = []
+    max_log_slots_found = 0
+    occupied_slots = 0  # Initialize occupied_slots
+    
+    # Helper function to count matches on already-captured image
+    def count_matches_on_image(template, threshold):
+        result = cv2.matchTemplate(screen_bgr, template, cv2.TM_CCOEFF_NORMED)
+        locations = np.where(result >= threshold)
+        matches = list(zip(*locations[::-1]))
+        if not matches:
+            return 0
+        
+        # Group nearby matches (same logic as bot_utils.count_inventory_items)
+        template_h, template_w = template.shape[:2]
+        grouping_distance = min(40, max(30, template_w * 0.6))
+        matches.sort(key=lambda m: (m[1], m[0]))
+        
+        grouped_matches = []
+        for match in matches:
+            x, y = match
+            added = False
+            for i, group in enumerate(grouped_matches):
+                group_x, group_y = group
+                distance = np.sqrt((x - group_x)**2 + (y - group_y)**2)
+                if distance < grouping_distance:
+                    added = True
+                    break
+            if not added:
+                grouped_matches.append(match)
+        
+        return len(grouped_matches)
+    
+    # Count logs using multiple thresholds on the same capture
+    for threshold in [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8]:
+        count = count_matches_on_image(log_template, threshold)
+        log_counts.append(count)
+        if count > max_log_slots_found:
+            max_log_slots_found = count
+    if log_counts:
+        # Median is less sensitive to occasional duplicate matches than max
+        log_counts_sorted = sorted(log_counts)
+        median_idx = len(log_counts_sorted) // 2
+        median_log_count = log_counts_sorted[median_idx]
+        max_log_slots_found = median_log_count
+    
+    # Count occupied slots using per-slot color analysis (for non-log items)
+    for row in range(7):
+        for col in range(4):
+            # Calculate the slot area (relative to captured image)
+            slot_left = col * slot_width
+            slot_top = row * slot_height
+            slot_right = min(slot_left + slot_width, INVENTORY_AREA["width"])
+            slot_bottom = min(slot_top + slot_height, INVENTORY_AREA["height"])
+            
+            # Extract slot region from captured image
+            slot_region = screen_bgr[slot_top:slot_bottom, slot_left:slot_right]
+            
+            if slot_region.size == 0:
+                continue
+            
+            # Check if slot is occupied (has an item) using color analysis
+            slot_hsv = cv2.cvtColor(slot_region, cv2.COLOR_BGR2HSV)
+            mean_saturation = np.mean(slot_hsv[:, :, 1])
+            mean_value = np.mean(slot_hsv[:, :, 2])
+            std_value = np.std(slot_hsv[:, :, 2])
+            std_saturation = np.std(slot_hsv[:, :, 1])
+            bright_frac = np.mean(slot_hsv[:, :, 2] > 110)
+            colorful_frac = np.mean(slot_hsv[:, :, 1] > 60)
+            
+            # Moderately strict to reduce overcounts while still catching filled slots
+            is_occupied = (
+                ((bright_frac > 0.10 and colorful_frac > 0.08) and (std_value > 12 or std_saturation > 7)) or
+                ((mean_saturation > 50 and mean_value > 115) and (std_saturation > 9 and std_value > 16)) or
+                (mean_value > 165 and std_value > 22)
+            )
+            
+            if is_occupied:
+                occupied_slots += 1
+    
+    # Ensure occupied is at least as high as log count (logs are occupied slots)
+    occupied_slots = max(occupied_slots, max_log_slots_found)
+
+    # Empty slot detection using template - PRIMARY method when available
+    empty_slots = None
+    empty_slot_count = 0
+    # Check if empty slot template exists - try multiple path resolutions
+    empty_slot_available = os.path.exists(EMPTY_SLOT_PATH)
+    temp_empty_path = EMPTY_SLOT_PATH
+    
+    if not empty_slot_available:
+        # Try relative path from current working directory
+        rel_path = os.path.join("templates", "empty_slot.png")
+        if os.path.exists(rel_path):
+            empty_slot_available = True
+            temp_empty_path = rel_path
+        else:
+            # Try absolute path resolution
+            abs_path = os.path.abspath(EMPTY_SLOT_PATH)
+            if os.path.exists(abs_path):
+                empty_slot_available = True
+                temp_empty_path = abs_path
+    
+    if empty_slot_available:
+        try:
+            # Load empty slot template once
+            empty_template = cv2.imread(temp_empty_path, cv2.IMREAD_COLOR)
+            if empty_template is not None:
+                # Convert template if needed
+                if len(empty_template.shape) == 3:
+                    channels = empty_template.shape[2]
+                    if channels == 4:
+                        empty_template = cv2.cvtColor(empty_template, cv2.COLOR_BGRA2BGR)
+                    elif channels == 1:
+                        empty_template = cv2.cvtColor(empty_template, cv2.COLOR_GRAY2BGR)
+                elif len(empty_template.shape) == 2:
+                    empty_template = cv2.cvtColor(empty_template, cv2.COLOR_GRAY2BGR)
+                
+                # Try a wider range of thresholds to catch empty slots (on same capture)
+                for threshold in [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9]:
+                    count = count_matches_on_image(empty_template, threshold)
+                    if count > empty_slot_count:
+                        empty_slot_count = count
+                # Treat 0 empty slots as a valid detection (means full)
+                empty_slots = empty_slot_count
+                # Calculate occupied from empty slots (most reliable)
+                occupied_from_empty = max(0, 28 - empty_slots)
+                occupied_slots = occupied_from_empty
+                # Recalculate log count more carefully when we have empty slot data (on same capture)
+                refined_log_count = 0
+                for threshold in [0.65, 0.7, 0.75, 0.8]:
+                    count = count_matches_on_image(log_template, threshold)
+                    if count > refined_log_count:
+                        refined_log_count = count
+                # Use the refined count, capped to occupied slots (can't have more logs than occupied slots)
+                max_log_slots_found = min(refined_log_count, occupied_slots)
+            else:
+                empty_slots = None
+        except Exception as e:
+            # Silent fallback - don't spam errors if empty slot template fails
+            empty_slots = None
+    
+    # Global log count fallback ONLY if empty slot template not available
+    if empty_slots is None:
+        try:
+            # Use already-captured image for additional threshold checks
+            global_log_count = 0
+            for threshold in [0.5, 0.55, 0.6, 0.65, 0.7, 0.45, 0.4, 0.35, 0.75, 0.8, 0.9]:
+                count = count_matches_on_image(log_template, threshold)
+                if count > global_log_count:
+                    global_log_count = count
+            # Use global count as fallback but don't inflate beyond per-slot count
+            max_log_slots_found = max(max_log_slots_found, min(global_log_count, 28))
+            # Only update occupied if we don't have empty slot data
+            occupied_slots = max(occupied_slots, max_log_slots_found)
+        except Exception:
+            pass
+    else:
+        # When we have empty slot data, ensure log count doesn't exceed occupied
+        max_log_slots_found = min(max_log_slots_found, occupied_slots)
+    
+    # Return the log count (not checking for full inventory, just counting logs)
+    return max_log_slots_found
 
 def find_log_in_inventory():
     """
@@ -133,6 +322,68 @@ def check_has_tinderbox():
     """
     tinderbox_pos = find_tinderbox_in_inventory()
     return tinderbox_pos is not None
+
+def check_cant_fire_message():
+    """
+    Checks if the "can't light fire here" message appears in chat.
+    Returns True if the message is detected, False otherwise.
+    Checks multiple times over a period to catch the message even if it appears with delay.
+    """
+    import cv2
+    import numpy as np
+    import mss
+    
+    if not os.path.exists(CANT_FIRE_TEMPLATE_PATH):
+        # Template doesn't exist yet, can't check
+        return False
+    
+    # Preload template (handle RGBA/grayscale) for multi-scale matching
+    tpl = cv2.imread(CANT_FIRE_TEMPLATE_PATH, cv2.IMREAD_UNCHANGED)
+    if tpl is None:
+        return False
+    if len(tpl.shape) == 2:  # grayscale
+        tpl = cv2.cvtColor(tpl, cv2.COLOR_GRAY2BGR)
+    elif tpl.shape[2] == 4:  # RGBA
+        tpl = cv2.cvtColor(tpl, cv2.COLOR_BGRA2BGR)
+    tpl_h, tpl_w = tpl.shape[:2]
+    
+    # Check multiple times - chat messages can appear with slight delays
+    # Check at these intervals (cumulative delays from start)
+    check_delays = [0.2, 0.5, 0.8, 1.2]  # Check at these intervals (seconds)
+    last_delay = 0
+    
+    best_match = (0.0, 1.0)  # (score, scale)
+    for check_delay in check_delays:
+        # Wait for the difference between this check and the last one
+        wait_time = check_delay - last_delay
+        bot_utils.jitter_sleep(wait_time)
+        last_delay = check_delay
+        
+        # Capture chat area once per delay (only the bottom portion where recent messages appear)
+        with mss.mss() as sct:
+            chat_img = np.array(sct.grab(CHAT_AREA))
+            chat_bgr_full = cv2.cvtColor(chat_img, cv2.COLOR_BGRA2BGR)
+            h_full = chat_bgr_full.shape[0]
+            # Focus on bottom 40% to emphasize most recent messages
+            start_y = int(h_full * 0.6)
+            chat_bgr = chat_bgr_full[start_y:, :]
+        
+        # Multi-scale, multi-threshold matching to catch font/size differences
+        for scale in [1.0, 0.95, 1.05, 0.9]:
+            if scale != 1.0:
+                scaled_tpl = cv2.resize(tpl, (max(1, int(tpl_w * scale)), max(1, int(tpl_h * scale))), interpolation=cv2.INTER_AREA)
+            else:
+                scaled_tpl = tpl
+            res = cv2.matchTemplate(chat_bgr, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+            if max_val > best_match[0]:
+                best_match = (max_val, scale)
+    
+    # Accept only strong matches to avoid false positives
+    if best_match[0] >= 0.75:
+        print(f"⚠ Detected 'can't light fire here' message in chat! (best score {best_match[0]:.2f}, scale {best_match[1]:.2f})")
+        return True
+    return False
 
 # Global flag to track if a fire is currently being lit
 _fire_in_progress = False
@@ -190,6 +441,8 @@ def light_fire():
     bot_utils.jitter_sleep(random.uniform(0.1, 0.2))
     pyautogui.click()  # Use tinderbox on log
     
+    # Don't check for chat messages here - that's handled in the main loop
+    # This function just attempts to light the fire
     return True
 
 def wait_for_fire():
@@ -258,6 +511,8 @@ def wait_for_fire():
         
         # Use consistent counting method
         final_count = get_log_count()
+        
+        # Don't check chat messages here - chat checking only happens in main loop before moving
         
         # Check if we can still find any log in inventory (alternative verification)
         any_log_exists = find_log_in_inventory() is not None
@@ -334,6 +589,11 @@ def wait_for_fire():
         bot_utils.jitter_sleep(0.15)
         count = get_log_count()
         verification_counts.append(count)
+        if check_cant_fire_message():
+            print("⚠ Chat says we can't light a fire here (detected during final verification). Moving to a new spot...")
+            _fire_in_progress = False
+            move_character_away()
+            return False, True
     
     # Use the minimum count from all verification checks (most reliable)
     final_count = min(verification_counts)
@@ -430,7 +690,10 @@ def move_character_away():
     Moves the character away from current position to avoid walls/obstacles/fires.
     Clicks on the ground in the game area to walk to a location where fire can be placed.
     Tries multiple positions to find a clear spot, moving further away each time.
+    After each move, attempts to light a fire. Returns True if fire was successfully lit.
     """
+    global _fire_in_progress
+    
     print("⚠ Character may be stuck. Moving to a new location where fire can be placed...")
     
     # Define multiple distinct areas to try, spread across the game area
@@ -471,6 +734,9 @@ def move_character_away():
     # Shuffle the list to try different areas each time
     random.shuffle(walk_areas)
     
+    # Get initial log count before moving
+    initial_log_count = get_log_count()
+    
     # Try up to 3 different positions
     max_attempts = 3
     for attempt in range(max_attempts):
@@ -485,6 +751,19 @@ def move_character_away():
         # Make sure we're still in the game area and away from edges/inventory
         walk_x = max(GAME_AREA["left"] + 120, min(walk_x, GAME_AREA["left"] + GAME_AREA["width"] * 0.55))
         walk_y = max(GAME_AREA["top"] + 120, min(walk_y, GAME_AREA["top"] + GAME_AREA["height"] - 120))
+        
+        # CRITICAL: Make sure we don't click in the chat area
+        chat_right = CHAT_AREA["left"] + CHAT_AREA["width"]
+        chat_bottom = CHAT_AREA["top"] + CHAT_AREA["height"]
+        
+        # If the click would be in the chat area, move it above the chat
+        if (CHAT_AREA["left"] <= walk_x <= chat_right and 
+            CHAT_AREA["top"] <= walk_y <= chat_bottom):
+            # Move the y coordinate above the chat area
+            walk_y = CHAT_AREA["top"] - random.randint(50, 150)
+            # Make sure it's still in valid game area
+            walk_y = max(GAME_AREA["top"] + 120, walk_y)
+            print(f"  Adjusted walk position to avoid chat area: ({walk_x}, {walk_y})")
         
         print(f"Attempt {attempt + 1}/{max_attempts}: Walking to ({walk_x}, {walk_y}) to find a clear spot...")
         
@@ -503,15 +782,56 @@ def move_character_away():
         # Additional small delay to ensure character has stopped moving
         bot_utils.jitter_sleep(random.uniform(0.5, 1.0))
         
-        # After moving, wait a bit longer to ensure we're in a new area
-        # This gives time for any fires to be visible if we moved near them
-        if attempt < max_attempts - 1:
-            print("  Checking if location is clear...")
-            bot_utils.jitter_sleep(random.uniform(0.5, 1.0))
-        
         print("✓ Character moved to new location.")
+        
+        # After moving, wait a moment for any old chat messages to clear
+        # Also give the game time to update after movement
+        bot_utils.jitter_sleep(random.uniform(1.0, 1.5))
+        
+        # After moving, try to light a fire to see if this location works
+        # After moving, we ONLY use log count to determine success (not chat messages)
+        # This avoids detecting old error messages from the previous location
+        print("  Testing if we can light a fire at this location...")
+        
+        # Get log count before attempting to light fire
+        log_count_before = get_log_count()
+        
+        if light_fire():
+            # Wait for fire to start and inventory to update
+            # Don't check chat messages after moving - only use log count
+            bot_utils.jitter_sleep(random.uniform(1.5, 2.0))
+            
+            # Check if log count decreased - this is the ONLY indicator we use after moving
+            # Wait a moment for inventory to update
+            bot_utils.jitter_sleep(random.uniform(0.5, 0.8))
+            log_count_after = get_log_count()
+            
+            # If log count decreased, fire was successfully lit!
+            if log_count_after < log_count_before:
+                print(f"  ✓ Success! Fire lit successfully at new location. (Logs: {log_count_before} -> {log_count_after})")
+                # Wait for fire to complete fully
+                fire_success, exhausted_all_checks = wait_for_fire()
+                if fire_success:
+                    return True  # Found a good spot, return success
+                else:
+                    # Log count decreased but wait_for_fire didn't confirm - still consider it success
+                    print(f"  ✓ Fire confirmed by log count decrease. (Logs: {log_count_before} -> {log_count_after})")
+                    return True
+            
+            # Log count didn't decrease - fire didn't light, try next spot
+            print(f"  ⚠ Fire didn't light at this location. (Logs: {log_count_before} -> {log_count_after}, unchanged)")
+            # Reset fire in progress flag since we're moving again
+            _fire_in_progress = False
+            continue
+        else:
+            # Couldn't find logs/tinderbox
+            # Reset flag if it was set
+            _fire_in_progress = False
+            print("  ⚠ Could not find logs/tinderbox. Trying next spot...")
+            continue
     
-    print("✓ Finished moving. Retrying firemaking...")
+    print("✓ Finished moving. Could not find a clear spot after all attempts.")
+    return False  # Couldn't find a good spot
 
 
 def maybe_small_reposition_after_fire(fires_lit):
@@ -540,6 +860,8 @@ def main():
     Main bot loop for firemaking.
     Lights fires until inventory is empty, then stops.
     """
+    global _fire_in_progress
+    
     print("=" * 60)
     print("Stardust - Educational Firemaking Bot")
     print("=" * 60)
@@ -583,6 +905,24 @@ def main():
         return
     
     print(f"✓ Using tinderbox template: {os.path.basename(TINDERBOX_ICON_PATH)}")
+    
+    # Check for cant_fire template
+    if not os.path.exists(CANT_FIRE_TEMPLATE_PATH):
+        print("\n" + "=" * 60)
+        print("⚠ CANT_FIRE TEMPLATE NOT FOUND")
+        print("=" * 60)
+        print(f"Template path: {CANT_FIRE_TEMPLATE_PATH}")
+        print("\nThe bot can detect when it can't light a fire, but you need to:")
+        print("1. Try to light a fire in an invalid location (e.g., too close to another fire)")
+        print("2. Capture the chat message that appears using:")
+        print("   python tools/capture_template.py")
+        print("3. Save it as: cant_fire.png in the templates folder")
+        print("4. Calibrate the chat area using:")
+        print("   python tools/calibrate_chat.py")
+        print("\nThe bot will still work without this, but won't detect 'can't fire' errors.")
+        print("=" * 60)
+    else:
+        print(f"✓ Using cant_fire template: {os.path.basename(CANT_FIRE_TEMPLATE_PATH)}")
     
     print("\nStarting in 5 seconds... Switch to RuneScape window now.")
     print("Press Ctrl+C in this terminal to stop the bot.\n")
@@ -632,73 +972,120 @@ def main():
             
             # Light a fire (only if no fire is currently in progress)
             # The _fire_in_progress flag prevents double-lighting
-            if not _fire_in_progress and light_fire():
-                # Wait for fire and check if it was actually successful
-                fire_success, exhausted_all_checks = wait_for_fire()
+            if not _fire_in_progress:
+                fire_attempt = light_fire()
                 
-                if fire_success:
-                    # Fire was successfully lit (log was consumed)
-                    fires_lit += 1
-                    consecutive_failures = 0  # Reset failure counter on success
-                    print(f"Fire #{fires_lit} lit successfully!")
-                    
-                    # CRITICAL: Wait longer after successful fire to ensure inventory is fully updated
-                    # This prevents the bot from trying to light another fire too quickly
-                    # and accidentally clicking/dropping logs
-                    bot_utils.jitter_sleep(random.uniform(1.0, 2.0))
-                    
-                    # Small random delay between fires, plus occasional longer
-                    # "thinking" pauses after many fires.
-                    maybe_small_reposition_after_fire(fires_lit)
-
-                    if fires_lit > 20 and random.random() < 0.15:
-                        long_pause = random.uniform(4.0, 9.0)
-                        print(f"Taking a longer pause after many fires... ({long_pause:.1f} seconds)")
-                        bot_utils.jitter_sleep(long_pause)
-                    else:
-                        bot_utils.maybe_idle("between_fires")
-                        bot_utils.jitter_sleep(random.uniform(0.5, 1.5))
-                else:
-                    # light_fire() succeeded (clicked items) but fire wasn't actually lit
-                    # This means we're stuck - can't place fire at current location
+                # If light_fire() returned False (couldn't find items), skip
+                if not fire_attempt:
                     consecutive_failures += 1
-                    print(f"⚠ Fire attempt failed - log not consumed. (Failure count: {consecutive_failures})")
-                    print("   Character may be stuck or unable to place fire at this location.")
+                    print(f"Could not find tinderbox/log in inventory. (Failure count: {consecutive_failures})")
+                    if consecutive_failures >= max_failures_before_move and has_logs:
+                        print(f"\n⚠ Stuck detected! Failed {consecutive_failures} times but logs still exist.")
+                        print("   Moving to a new location...")
+                        move_character_away()
+                        consecutive_failures = 0
+                    else:
+                        bot_utils.jitter_sleep(random.uniform(2, 4))
+                    continue
+                
+                # After attempting to light fire, check for "can't fire" message
+                # This check only happens in the main loop (before moving), not after moving
+                bot_utils.jitter_sleep(random.uniform(0.5, 0.8))  # Wait for message to appear
+                if check_cant_fire_message():
+                    print("⚠ Detected 'can't light fire here' message. Moving to a new spot...")
+                    _fire_in_progress = False  # Reset flag before moving
+                    # move_character_away() will try to light a fire after each move
+                    # Returns True if fire was successfully lit, False if all attempts failed
+                    fire_success_after_move = move_character_away()
+                    if fire_success_after_move:
+                        # Fire was successfully lit at the new location
+                        fires_lit += 1
+                        consecutive_failures = 0  # Reset counter after success
+                        print(f"Fire #{fires_lit} lit successfully after moving!")
+                        
+                        # Minimal delay after successful fire
+                        bot_utils.jitter_sleep(random.uniform(0.2, 0.4))
+                        maybe_small_reposition_after_fire(fires_lit)
+                        
+                        if fires_lit > 20 and random.random() < 0.05:
+                            long_pause = random.uniform(2.0, 4.0)
+                            print(f"Taking a longer pause after many fires... ({long_pause:.1f} seconds)")
+                            bot_utils.jitter_sleep(long_pause)
+                        else:
+                            bot_utils.maybe_idle("between_fires")
+                            bot_utils.jitter_sleep(random.uniform(0.1, 0.3))
+                    else:
+                        # All movement attempts failed, continue loop to try again
+                        consecutive_failures = 0  # Reset counter after moving
+                        bot_utils.jitter_sleep(random.uniform(0.5, 1.0))
+                    continue
+                
+                if fire_attempt:
+                    # Wait for fire and check if it was actually successful
+                    fire_success, exhausted_all_checks = wait_for_fire()
                     
-                    # If we exhausted all checks (went through all 12), that's a strong signal we're stuck
-                    # Move immediately rather than waiting for 3 failures
-                    if exhausted_all_checks and has_logs:
-                        print(f"\n⚠ Stuck detected! Went through all verification checks but fire wasn't lit.")
-                        print("   Moving to a new location immediately...")
+                    if fire_success:
+                        # Fire was successfully lit (log was consumed)
+                        fires_lit += 1
+                        consecutive_failures = 0  # Reset failure counter on success
+                        print(f"Fire #{fires_lit} lit successfully!")
+                        
+                        # Minimal delay after successful fire to ensure inventory is fully updated
+                        # Reduced delay for faster fire-after-fire cycle
+                        bot_utils.jitter_sleep(random.uniform(0.2, 0.4))
+                        
+                        # Small random delay between fires, plus occasional longer
+                        # "thinking" pauses after many fires.
+                        maybe_small_reposition_after_fire(fires_lit)
+
+                        if fires_lit > 20 and random.random() < 0.05:  # Reduced chance from 0.15 to 0.05
+                            long_pause = random.uniform(2.0, 4.0)  # Reduced duration from 4.0-9.0 to 2.0-4.0
+                            print(f"Taking a longer pause after many fires... ({long_pause:.1f} seconds)")
+                            bot_utils.jitter_sleep(long_pause)
+                        else:
+                            bot_utils.maybe_idle("between_fires")
+                            bot_utils.jitter_sleep(random.uniform(0.1, 0.3))  # Reduced from 0.5-1.5 to 0.1-0.3
+                    else:
+                        # light_fire() succeeded (clicked items) but fire wasn't actually lit
+                        # This means we're stuck - can't place fire at current location
+                        consecutive_failures += 1
+                        print(f"⚠ Fire attempt failed - log not consumed. (Failure count: {consecutive_failures})")
+                        print("   Character may be stuck or unable to place fire at this location.")
+                        
+                        # If we exhausted all checks (went through all 12), that's a strong signal we're stuck
+                        # Move immediately rather than waiting for 3 failures
+                        if exhausted_all_checks and has_logs:
+                            print(f"\n⚠ Stuck detected! Went through all verification checks but fire wasn't lit.")
+                            print("   Moving to a new location immediately...")
+                            move_character_away()
+                            consecutive_failures = 0  # Reset counter after moving
+                            # Wait a bit longer after moving before retrying
+                            bot_utils.jitter_sleep(random.uniform(1.0, 2.0))
+                        # Otherwise, if we've failed multiple times but logs still exist, we might be stuck
+                        elif consecutive_failures >= max_failures_before_move and has_logs:
+                            print(f"\n⚠ Possible stuck detected! Failed {consecutive_failures} times but logs still exist.")
+                            print("   This might be due to lag or slow firemaking. Moving to a new location...")
+                            move_character_away()
+                            consecutive_failures = 0  # Reset counter after moving
+                            # Wait a bit longer after moving before retrying
+                            bot_utils.jitter_sleep(random.uniform(1.0, 2.0))
+                        else:
+                            print("Waiting before retry...")
+                            bot_utils.jitter_sleep(random.uniform(1, 2))
+                else:
+                    # Failed to find/click tinderbox or log in inventory
+                    consecutive_failures += 1
+                    print(f"Could not find tinderbox/log in inventory. (Failure count: {consecutive_failures})")
+                    
+                    # If we've failed multiple times but logs still exist, we might be stuck
+                    if consecutive_failures >= max_failures_before_move and has_logs:
+                        print(f"\n⚠ Stuck detected! Failed {consecutive_failures} times but logs still exist.")
+                        print("   Moving to a new location...")
                         move_character_away()
                         consecutive_failures = 0  # Reset counter after moving
-                        # Wait a bit longer after moving before retrying
-                        bot_utils.jitter_sleep(random.uniform(1.0, 2.0))
-                    # Otherwise, if we've failed multiple times but logs still exist, we might be stuck
-                    elif consecutive_failures >= max_failures_before_move and has_logs:
-                        print(f"\n⚠ Possible stuck detected! Failed {consecutive_failures} times but logs still exist.")
-                        print("   This might be due to lag or slow firemaking. Moving to a new location...")
-                        move_character_away()
-                        consecutive_failures = 0  # Reset counter after moving
-                        # Wait a bit longer after moving before retrying
-                        bot_utils.jitter_sleep(random.uniform(1.0, 2.0))
                     else:
                         print("Waiting before retry...")
-                        bot_utils.jitter_sleep(random.uniform(1, 2))
-            else:
-                # Failed to find/click tinderbox or log in inventory
-                consecutive_failures += 1
-                print(f"Could not find tinderbox/log in inventory. (Failure count: {consecutive_failures})")
-                
-                # If we've failed multiple times but logs still exist, we might be stuck
-                if consecutive_failures >= max_failures_before_move and has_logs:
-                    print(f"\n⚠ Stuck detected! Failed {consecutive_failures} times but logs still exist.")
-                    print("   Moving to a new location...")
-                    move_character_away()
-                    consecutive_failures = 0  # Reset counter after moving
-                else:
-                    print("Waiting before retry...")
-                    bot_utils.jitter_sleep(random.uniform(2, 4))
+                        bot_utils.jitter_sleep(random.uniform(2, 4))
             
     except KeyboardInterrupt:
         print("\n\nBot stopped by user.")
@@ -711,4 +1098,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

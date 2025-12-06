@@ -70,12 +70,18 @@ While significant improvements have been made to tree detection with multiple fi
 **Firemaking Module (`scripts/firemaking.py`):**
 - Template matching to find logs and tinderbox in inventory
 - Uses tinderbox-on-log clicks to light fires
-- **Stuck detection and movement** - automatically moves character if unable to place a fire
+- **"Can't fire" error detection** - detects chat messages when unable to place a fire
+- **Intelligent stuck detection and movement** - automatically moves character if unable to place a fire, then tests new locations
+- **Log count-based verification** - uses inventory log count changes to verify fire success (more reliable than chat messages)
+- **Optimized counting** - single inventory capture for all checks (reduces delays significantly)
+- **Advanced log counting** - uses same logic as woodcutter with empty slot templates and per-slot analysis
 - **Double-lighting prevention** - prevents attempting to light multiple fires simultaneously
-- **Consistent log counting** - uses unified method across all functions
 - **Improved fire detection** - multiple verification checks to confirm fire was lit
+- **Chat area avoidance** - prevents clicking on chat when moving to new locations
 - Stops when inventory is empty (pathfinding/banking not implemented yet)
-- Debug helper `tools/debug_firemaking.py` to visualize what the bot sees
+- Debug helpers:
+  - `tools/debug_firemaking.py` - visualize inventory detection
+  - `tools/debug_chat.py` - visualize chat area and error message detection
 - **Anti-detection features**:
   - Context-aware mouse behavior (profiled movement)
   - Jittered clicks/movement
@@ -111,6 +117,7 @@ stardust/
 ├── tools/               # Calibration and testing tools
 │   ├── calibrate_game_area.py
 │   ├── calibrate_inventory.py
+│   ├── calibrate_chat.py        # Chat area calibration for error detection
 │   ├── color_picker.py
 │   ├── capture_template.py
 │   ├── identify_tree_type.py
@@ -120,6 +127,7 @@ stardust/
 │   ├── debug_tree_detection.py
 │   ├── debug_inventory.py       # Inventory template matching (generic)
 │   ├── debug_firemaking.py      # Firemaking-specific inventory debugging
+│   ├── debug_chat.py            # Chat area and error message debugging
 │   └── fix_template.py
 ├── config/              # Player configuration
 │   ├── player_stats.py  # Your character's skill levels
@@ -131,7 +139,10 @@ stardust/
 │   ├── SETUP_GUIDE.md   # Quick setup guide
 │   └── README_TEMPLATES.md
 ├── templates/           # Template images for detection
-│   └── log_icon.png
+│   ├── log_icon.png
+│   ├── empty_slot.png   # Empty inventory slot (for accurate counting)
+│   ├── cant_fire.png    # Chat error message template (optional, for stuck detection)
+│   └── tinderbox_icon.png or log_tinderbox.png
 ├── requirements.txt     # Python dependencies
 └── README.md           # This file
 ```
@@ -191,7 +202,29 @@ stardust/
    - Run `python tools/capture_template.py` and save as `tinderbox_icon.png` (or `log_tinderbox.png`)
    - Keep the template in the `templates` folder so `firemaking.py` can load it
 
-   **Note:** The calibration tools automatically update the configuration files - no manual editing needed for game area, inventory area, or tree colors!
+   **Step 4f: Create Empty Slot Template (Recommended for Accurate Counting)**
+   - Make sure you have at least one empty inventory slot
+   - Run `python tools/capture_template.py` and save as `empty_slot.png`
+   - This template helps the bot accurately count items by detecting empty slots
+   - Keep the template in the `templates` folder
+
+   **Step 4g: Calibrate Chat Area (Firemaking - Optional but Recommended)**
+   - Open RuneScape and make sure the chat is visible
+   - Try to light a fire in an invalid location (e.g., too close to another fire) to see the error message
+   - Run `python tools/calibrate_chat.py`
+   - Follow the prompts:
+     * Move mouse to **top-left corner** of the chat area (where messages appear) → Press ENTER
+     * Move mouse to **bottom-right corner** of the chat area → Press ENTER
+   - The tool **automatically updates** `scripts/firemaking.py` with the `CHAT_AREA` coordinates
+
+   **Step 4h: Create "Can't Fire" Chat Template (Firemaking - Optional)**
+   - Try to light a fire in an invalid location (e.g., too close to another fire)
+   - Capture the chat message that appears (e.g., "You can't light a fire here")
+   - Run `python tools/capture_template.py` and save as `cant_fire.png`
+   - This helps the bot detect when it's stuck and automatically move to a new location
+   - Keep the template in the `templates` folder
+
+   **Note:** The calibration tools automatically update the configuration files - no manual editing needed for game area, inventory area, chat area, or tree colors!
 
 5. **Test detection:**
    ```bash
@@ -282,10 +315,15 @@ If the bot isn't finding trees, it's usually because the color range doesn't mat
 - ✅ **Improved full detection** - More accurate inventory full detection
 
 **Firemaking Improvements:**
-- ✅ **Stuck detection and movement** - Automatically moves character if unable to place fire
+- ✅ **"Can't fire" error detection** - Detects chat messages when unable to place a fire
+- ✅ **Intelligent stuck detection and movement** - Automatically moves character and tests new locations
+- ✅ **Log count-based verification** - Uses inventory changes to verify fire success (more reliable)
+- ✅ **Optimized counting** - Single inventory capture reduces delays from 20+ to just 1 per check
+- ✅ **Advanced log counting** - Uses same sophisticated logic as woodcutter (empty slot templates, per-slot analysis)
+- ✅ **Chat area avoidance** - Prevents clicking on chat when moving to new locations
 - ✅ **Double-lighting prevention** - Prevents concurrent fire lighting attempts
-- ✅ **Consistent log counting** - Unified method across all functions
 - ✅ **Improved fire detection** - Multiple verification checks
+- ✅ **Chat calibration and debugging tools** - New tools for setting up error detection
 
 ## TODO / Planned Features
 
