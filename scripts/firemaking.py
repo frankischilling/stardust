@@ -834,26 +834,75 @@ def move_character_away():
     return False  # Couldn't find a good spot
 
 
+def adjust_camera():
+    """
+    Randomly adjusts the camera to simulate human-like behavior.
+    Players often rotate the camera to check surroundings or adjust their view.
+    Uses arrow keys to rotate camera left or right.
+    """
+    # Randomly choose left or right rotation
+    direction = random.choice(['left', 'right'])
+    
+    # Determine which arrow key to press
+    if direction == 'left':
+        key = 'left'
+    else:
+        key = 'right'
+    
+    print(f"🔄 Adjusting camera {direction}...")
+    
+    # Small delay before pressing key (ensure window is focused)
+    bot_utils.jitter_sleep(random.uniform(0.1, 0.2))
+    
+    # Press and hold the arrow key for a random duration (human-like)
+    # RuneScape camera rotates while key is held
+    hold_duration = random.uniform(0.3, 0.8)  # Hold for 0.3-0.8 seconds
+    
+    try:
+        pyautogui.keyDown(key)
+        time.sleep(hold_duration)  # Use time.sleep for more reliable key holding
+        pyautogui.keyUp(key)
+        if bot_utils.ANTI_DETECTION_ENABLED:
+            bot_utils._log_anti(f"camera {direction} {hold_duration:.2f}s")
+        print(f"  ✓ Camera adjusted {direction} (held for {hold_duration:.2f}s)")
+    except Exception as e:
+        # Try alternative method - press key multiple times
+        try:
+            for _ in range(2):
+                pyautogui.press(key)
+                time.sleep(0.1)
+            print(f"  ✓ Camera adjusted {direction} (alternative method)")
+        except Exception as e2:
+            print(f"  ⚠ Failed to adjust camera: {e2}")
+    
+    # Small delay after camera movement to let view settle
+    bot_utils.jitter_sleep(random.uniform(0.2, 0.4))
+
 def maybe_small_reposition_after_fire(fires_lit):
     """
     Occasionally click a small walk target near the player between fires
     to simulate repositioning or adjusting the line of fires.
     Frequency increases slightly as more fires are lit.
+    Also occasionally adjusts camera to check surroundings.
     """
     # Base small chance, scaled up very slightly after many fires.
     base_chance = 0.04
     bonus = min(0.06, fires_lit * 0.001)  # +0.1 at 100 fires max
     chance = base_chance + bonus
-    if random.random() > chance:
-        return
-
-    walk_x = GAME_AREA["left"] + int(GAME_AREA["width"] * random.uniform(0.35, 0.55))
-    walk_y = GAME_AREA["top"] + int(GAME_AREA["height"] * random.uniform(0.55, 0.75))
-    print(f"(Firemaking wander) Walking briefly to ({walk_x}, {walk_y}) between fires...")
-    bot_utils.human_like_move(walk_x, walk_y, profile="skilling")
-    bot_utils.jitter_sleep(random.uniform(0.08, 0.2))
-    pyautogui.click()
-    bot_utils.jitter_sleep(random.uniform(0.9, 1.8))
+    if random.random() < chance:
+        walk_x = GAME_AREA["left"] + int(GAME_AREA["width"] * random.uniform(0.35, 0.55))
+        walk_y = GAME_AREA["top"] + int(GAME_AREA["height"] * random.uniform(0.55, 0.75))
+        print(f"(Firemaking wander) Walking briefly to ({walk_x}, {walk_y}) between fires...")
+        bot_utils.human_like_move(walk_x, walk_y, profile="skilling")
+        bot_utils.jitter_sleep(random.uniform(0.08, 0.2))
+        pyautogui.click()
+        bot_utils.jitter_sleep(random.uniform(0.9, 1.8))
+    
+    # Occasionally adjust camera to "check surroundings"
+    # Higher chance after many fires (players get restless)
+    camera_chance = 0.25 + min(0.15, fires_lit * 0.001)  # 25% base, up to 40% after many fires
+    if random.random() < camera_chance:
+        adjust_camera()
 
 def main():
     """
@@ -947,7 +996,19 @@ def main():
     max_failures_before_move = 3  # Move character after 3 consecutive failures
     
     try:
+        fires_since_last_camera = 0  # Track fires since last camera adjustment
+        
         while True:
+            # Occasionally adjust camera at the start of loop (simulate checking surroundings)
+            # Increase chance based on fires since last adjustment
+            base_chance = 0.20  # 20% base chance
+            bonus_chance = min(0.25, fires_since_last_camera * 0.03)  # +3% per fire, max 25%
+            if random.random() < (base_chance + bonus_chance):
+                adjust_camera()
+                fires_since_last_camera = 0  # Reset counter
+            else:
+                fires_since_last_camera += 1
+            
             # Check if we still have tinderbox (should always be there, but check anyway)
             if not check_has_tinderbox():
                 print("\n⚠ Tinderbox not found! Make sure it's still in your inventory.")
@@ -1007,6 +1068,13 @@ def main():
                         bot_utils.jitter_sleep(random.uniform(0.2, 0.4))
                         maybe_small_reposition_after_fire(fires_lit)
                         
+                        # Adjust camera after moving (check new surroundings)
+                        if random.random() < 0.25:  # 25% chance after moving
+                            adjust_camera()
+                            fires_since_last_camera = 0
+                        else:
+                            fires_since_last_camera += 1
+                        
                         if fires_lit > 20 and random.random() < 0.05:
                             long_pause = random.uniform(2.0, 4.0)
                             print(f"Taking a longer pause after many fires... ({long_pause:.1f} seconds)")
@@ -1037,6 +1105,15 @@ def main():
                         # Small random delay between fires, plus occasional longer
                         # "thinking" pauses after many fires.
                         maybe_small_reposition_after_fire(fires_lit)
+                        
+                        # Adjust camera more frequently after fires (players often check surroundings)
+                        # Base chance increases with fires lit (players get restless over time)
+                        camera_chance = 0.30 + min(0.20, fires_lit * 0.002)  # 30% base, up to 50% after many fires
+                        if random.random() < camera_chance:
+                            adjust_camera()
+                            fires_since_last_camera = 0  # Reset counter
+                        else:
+                            fires_since_last_camera += 1
 
                         if fires_lit > 20 and random.random() < 0.05:  # Reduced chance from 0.15 to 0.05
                             long_pause = random.uniform(2.0, 4.0)  # Reduced duration from 4.0-9.0 to 2.0-4.0

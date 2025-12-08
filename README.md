@@ -78,6 +78,7 @@ While significant improvements have been made to tree detection with multiple fi
 - **Double-lighting prevention** - prevents attempting to light multiple fires simultaneously
 - **Improved fire detection** - multiple verification checks to confirm fire was lit
 - **Chat area avoidance** - prevents clicking on chat when moving to new locations
+- **Camera adjustments** - randomly rotates camera to "check surroundings" (simulates human behavior)
 - Stops when inventory is empty (pathfinding/banking not implemented yet)
 - Debug helpers:
   - `tools/debug_firemaking.py` - visualize inventory detection
@@ -89,7 +90,42 @@ While significant improvements have been made to tree detection with multiple fi
   - Capture timing randomness
   - Misclick simulation (rare deliberate misclicks followed by correction)
   - Harmless repositioning after fires
+  - Random camera adjustments (looking around)
   - All configurable in `config/player_config.py`
+
+**Ardougne Baker Thieving (`scripts/ardy_baker.py`):**
+- **Spam steals from the Ardougne baker stall** while **staying on one tile** for efficient thieving
+- **RuneLite Object Marker detection** - Uses red fill marker (same system as woodcutter marker mode) to detect the baker stall
+- **Sticky stall targeting** - Locks onto the initial stall position and ignores distant red objects (text, hitsplats, etc.)
+  - Requires 20 consecutive detections before switching to a new location
+  - Rejects any detection more than 100 pixels from the original stall
+  - Prevents random clicks on wrong objects
+- **Smart stall waiting** - Waits for the red marker to reappear after each steal (marker disappears during steal animation)
+  - Polls every 0.15-0.25 seconds until stall is visible again
+  - 8-second timeout before counting as failure
+  - 1.5-2.5 second delay after steal before checking for marker
+- **Inventory management** - Drops excess loot when inventory is full:
+  - Drops ALL bread first (cheapest item)
+  - Drops ALL chocolate slice second
+  - Drops ALL cakes last
+  - Uses shift-click for fast dropping
+  - Drops all items of each type until none remain
+- **Guard stun avoidance** - Detects stun messages in chat and steps away briefly, then returns to home tile
+- **Home tile tracking** - Maintains position on a single square, only moving for guard avoidance
+- **Debug tools**:
+  - `tools/debug_baker_stall.py` - Visualizes stall detection, shows what the bot sees
+  - `DEBUG_MODE` and `DEBUG_SAVE_DETECTIONS` flags for detailed logging
+- **Required templates** (in `templates/`):
+  - `cake_icon.png` or `cake.png` - Cake inventory icon (for dropping)
+  - `bread_icon.png` or `bread.png` - Bread inventory icon (for dropping)
+  - `chocolateslice_icon.png` or `chocolate_slice.png` - Chocolate slice inventory icon (for dropping)
+  - `stun_message.png` - Chat stun message template (optional but recommended for guard avoidance)
+  - `empty_slot.png` - Empty inventory slot (for accurate counting)
+- **Configuration**:
+  - Uses same `GAME_AREA`, `INVENTORY_AREA`, and `CHAT_AREA` as other scripts
+  - UI exclusion zones to filter out chat text and right-side UI panels
+  - World Y-axis filtering to keep detections in main play area
+  - Configurable delays and thresholds in script constants
 
 **Known Limitations:**
 - No pathfinding (assumes you're already near trees/bank)
@@ -113,7 +149,8 @@ stardust/
 ├── scripts/              # Main bot scripts
 │   ├── bot_utils.py     # Core utility functions
 │   ├── woodcutter.py    # Woodcutting bot module
-│   └── firemaking.py    # Firemaking bot module
+│   ├── firemaking.py    # Firemaking bot module
+│   └── ardy_baker.py    # Ardougne baker thieving module
 ├── tools/               # Calibration and testing tools
 │   ├── calibrate_game_area.py
 │   ├── calibrate_inventory.py
@@ -125,10 +162,11 @@ stardust/
 │   ├── test_detection.py
 │   ├── test_threshold.py
 │   ├── debug_tree_detection.py
-│   ├── debug_inventory.py       # Inventory template matching (generic)
-│   ├── debug_firemaking.py      # Firemaking-specific inventory debugging
-│   ├── debug_chat.py            # Chat area and error message debugging
-│   └── fix_template.py
+   │   ├── debug_inventory.py       # Inventory template matching (generic)
+   │   ├── debug_firemaking.py      # Firemaking-specific inventory debugging
+   │   ├── debug_chat.py            # Chat area and error message debugging
+   │   ├── debug_baker_stall.py     # Baker stall detection visualization
+   │   └── fix_template.py
 ├── config/              # Player configuration
 │   ├── player_stats.py  # Your character's skill levels
 │   ├── player_config.py # Bot behavior preferences
@@ -142,7 +180,12 @@ stardust/
 │   ├── log_icon.png
 │   ├── empty_slot.png   # Empty inventory slot (for accurate counting)
 │   ├── cant_fire.png    # Chat error message template (optional, for stuck detection)
-│   └── tinderbox_icon.png or log_tinderbox.png
+│   ├── tinderbox_icon.png or log_tinderbox.png
+│   ├── cake_icon.png    # Cake inventory icon for eating/dropping
+│   ├── bread_icon.png   # Bread inventory icon (for dropping)
+│   ├── chocolateslice_icon.png # Chocolate slice inventory icon (for dropping)
+│   └── stun_message.png # Chat stun message template (optional, for guards)
+│   Note: Baker stall detection uses RuneLite Object Marker (red fill) - no template needed
 ├── requirements.txt     # Python dependencies
 └── README.md           # This file
 ```
@@ -232,6 +275,51 @@ stardust/
    ```
    This verifies that tree detection and inventory detection are working correctly.
 
+### Ardougne Baker Thieving Setup
+
+**Step 1: Enable RuneLite Object Marker**
+- Install and enable the RuneLite **Object Marker** plugin
+- Mark the baker stall with a **filled red highlight** (255,0,0)
+- The bot uses the same marker detection system as woodcutter marker mode
+
+**Step 2: Calibrate Areas (if not already done)**
+- Reuse the same calibrated `GAME_AREA`, `INVENTORY_AREA`, and `CHAT_AREA` from woodcutter/firemaking setup
+- If you haven't calibrated yet, follow steps 4a, 4b, and 4g from the Quick Start section above
+
+**Step 3: Create Inventory Templates**
+- Capture inventory templates with `python tools/capture_template.py`:
+  - `templates/cake_icon.png` or `cake.png` - Cake inventory icon (for dropping)
+  - `templates/bread_icon.png` or `bread.png` - Bread inventory icon (for dropping)
+  - `templates/chocolateslice_icon.png` or `chocolate_slice.png` - Chocolate slice inventory icon (for dropping)
+  - `templates/stun_message.png` - Chat stun message template (optional but recommended for guard avoidance)
+  - `templates/empty_slot.png` - Empty inventory slot (for accurate counting, same as woodcutter)
+
+**Step 4: Test Detection (Recommended)**
+- Run `python tools/debug_baker_stall.py` to visualize what the bot sees
+- Choose option 1 to capture and visualize stall detection
+- Verify that:
+  - The red stall marker shows a green box (valid detection)
+  - Red text in chat and small objects are filtered out
+  - The stall is detected correctly
+
+**Step 5: Run the Bot**
+- Stand beside the baker stall on the tile you want to camp
+- Hover your mouse over your character tile (this sets the "home tile")
+- Run: `python scripts/ardy_baker.py`
+- The bot will:
+  - Detect the red-marked stall
+  - Lock onto that stall position (sticky targeting)
+  - Stay on your character tile (home tile tracking)
+  - Spam steal from the stall
+  - Wait for the marker to reappear after each steal
+  - Drop all bread, chocolate slice, and excess cakes when inventory is full (shift-click)
+  - Step away and return if guard stun is detected
+
+**Troubleshooting:**
+- If the bot clicks on wrong objects: The sticky targeting should prevent this, but if it happens, the stall might be too close to other red objects. Try moving to a different position.
+- If the bot doesn't find the stall: Check that the Object Marker plugin is enabled and the stall is marked with RED fill color. Run the debug tool to see what's being detected.
+- If dropping doesn't work: Make sure you have the inventory templates (`cake_icon.png`, `bread_icon.png`, `chocolateslice_icon.png`) in the `templates/` folder.
+
 ## Marker Mode (RuneLite Object Marker)
 If you prefer marker-based detection instead of trunk colors:
 - Install and enable the RuneLite **Object Marker** plugin.
@@ -260,6 +348,16 @@ If you prefer marker-based detection instead of trunk colors:
    
    **Note:** The firemaking bot will stop when your inventory is empty since pathfinding to bank is not implemented yet.
    Make sure logs and a tinderbox are in your inventory before you start.
+   
+   **For Ardougne Baker Thieving:**
+   ```bash
+   python scripts/ardy_baker.py
+   ```
+   
+   **Note:** Make sure you have the RuneLite Object Marker plugin enabled with the baker stall marked in RED.
+   Stand beside the stall and hover your mouse over your character tile before starting.
+   The bot will automatically drop loot when inventory is full and handle guard stuns.
+   
    Anti-detection settings (jittered input, idle pauses, capture delays) are enabled by default; tune them in `config/player_config.py`.
 
 ## Troubleshooting
@@ -324,6 +422,18 @@ If the bot isn't finding trees, it's usually because the color range doesn't mat
 - ✅ **Double-lighting prevention** - Prevents concurrent fire lighting attempts
 - ✅ **Improved fire detection** - Multiple verification checks
 - ✅ **Chat calibration and debugging tools** - New tools for setting up error detection
+
+**Ardougne Baker Thieving Improvements:**
+- ✅ **RuneLite Object Marker detection** - Uses red fill marker system (same as woodcutter)
+- ✅ **Sticky stall targeting** - Locks onto initial stall position, prevents clicking wrong objects
+- ✅ **Smart stall waiting** - Waits for marker to reappear after each steal
+- ✅ **Fast shift-click dropping** - Drops all loot items quickly using shift-click
+- ✅ **Complete item dropping** - Drops ALL items of each type (bread, chocolate slice, cake) until none remain
+- ✅ **Guard stun avoidance** - Detects stun messages and steps away, then returns
+- ✅ **Home tile tracking** - Maintains position on single square for efficient spam stealing
+- ✅ **UI exclusion zones** - Filters out chat text and right-side UI panels
+- ✅ **World Y-axis filtering** - Keeps detections in main play area
+- ✅ **Debug visualization tool** - `debug_baker_stall.py` to visualize what the bot sees
 
 ## TODO / Planned Features
 
